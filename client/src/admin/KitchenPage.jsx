@@ -1,0 +1,174 @@
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, ArrowRight, Bell, BellOff, Clock3, MapPin, RotateCcw, Search } from 'lucide-react';
+import { ErrorState, Spinner, useNow } from '../components/ui.jsx';
+import { elapsed, time } from '../lib/api.js';
+import { ADVANCE_LABELS, PAYMENT_STATUS, PRODUCTION_LABELS, PRODUCTION_STEPS, SERVICE_TYPES } from '../lib/labels.js';
+import { readJson, writeJson } from '../lib/storage.js';
+import { useAdmin, useLiveRefresh } from './context.js';
+import { OrderDetail, OrderItems, PaymentBadge, PeriodFilter, ServiceBadge, productionActions, useProductionMove, usePeriod } from './shared.jsx';
+
+// Momento em que o pedido entrou na etapa atual (base para o tempo de espera).
+const STAGE_SINCE = { new: 'createdAt', in_production: 'productionStartedAt', ready: 'readyAt', awaiting_pickup: 'awaitingPickupAt', finalized: 'finalizedAt' };
+// Minutos de espera para alerta (amarelo) e atraso (vermelho) em cada etapa.
+const LIMITS = { new: [5, 10], in_production: [15, 25], ready: [5, 10], awaiting_pickup: [10, 20] };
+
+function waitLevel(order, now) {
+  const limits = LIMITS[order.productionStatus];
+  const since = order[STAGE_SINCE[order.productionStatus]] || order.createdAt;
+  if (!limits || !since) return '';
+  const minutes = (now - new Date(since).getTime()) / 60000;
+  return minutes >= limits[1] ? 'late' : minutes >= limits[0] ? 'warn' : '';
+}
+
+function beep() {
+  try {
+    const context = new (window.AudioContext || window.webkitAudioContext)();
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.connect(gain); gain.connect(context.destination);
+    oscillator.frequency.value = 880;
+    gain.gain.setValueAtTime(0.18, context.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, context.currentTime + 0.6);
+    oscillator.start(); oscillator.stop(context.currentTime + 0.6);
+    oscillator.onended = () => context.close();
+  } catch { /* navegador sem áudio */ }
+}
+
+function KitchenCard({ order, now, role, requirePix, busy, onMove, onOpen, fresh }) {
+  const { next, previous } = productionActions(order, role);
+  const waitingPix = next === 'in_production' && requirePix && order.paymentMethod === 'pix' && !order.onCredit && order.paymentStatus !== 'confirmed';
+  const since = order[STAGE_SINCE[order.productionStatus]] || order.createdAt;
+  const level = waitLevel(order, now);
+  const draggable = Boolean(next || previous) && !busy;
+  return <article className={`k-card ${level ? `k-${level}` : ''} ${fresh ? 'k-fresh' : ''}`} draggable={draggable}
+    onDragStart={(event) => { event.dataTransfer.setData('text/plain', String(order.id)); event.dataTransfer.effectAllowed = 'move'; }}>
+    <div role="button" tabIndex={0} className="k-card-body" onClick={() => onOpen(order.id)} onKeyDown={(event) => { if (event.key === 'Enter') onOpen(order.id); }} aria-label={`Abrir pedido ${order.ticket}`}>
+      <header>
+        <b className="k-ticket">{order.ticket ? `#${order.ticket}` : order.orderNumber.slice(-6)}</b>
+        <span className="k-time"><Clock3 size={13} /> {time(order.createdAt)}</span>
+        {order.productionStatus !== 'finalized' && <span className={`k-elapsed ${level}`}>{level === 'late' && <AlertTriangle size={12} />}{elapsed(since, now)}</span>}
+      </header>
+      <div className="k-buyer"><b>{order.buyerName}</b><span>{order.teamName}</span></div>
+      <div className="k-badges"><ServiceBadge order={order} /><PaymentBadge order={order} /></div>
+      {order.serviceType === 'delivery' && <p className="k-address"><MapPin size={13} /> {order.deliveryAddress}{order.deliveryReference ? ` — ${order.deliveryReference}` : ''}</p>}
+      <OrderItems items={order.items} compact />
+      {order.productionStartedAt && order.productionStatus === 'in_production' && <small className="muted">Produção iniciada às {time(order.productionStartedAt)}</small>}
+      <small className="k-number">{order.orderNumber}</small>
+    </div>
+    {(next || previous) && <footer>
+      {previous && <button type="button" className="icon-btn" title="Voltar etapa (correção)" disabled={busy} onClick={() => onMove(order, previous)}><RotateCcw size={16} /></button>}
+      {next && (waitingPix
+        ? <span className="k-wait">Aguardando confirmação do PIX</span>
+        : <button type="button" className={`btn btn-sm ${next === 'finalized' ? 'btn-success' : 'btn-primary'}`} disabled={busy} onClick={() => onMove(order, next)}>{ADVANCE_LABELS[next]} <ArrowRight size={15} /></button>)}
+    </footer>}
+  </article>;
+}
+
+export default function KitchenPage() {
+  const { call, user } = useAdmin();
+  const period = usePeriod('today');
+  const [data, setData] = useState(null);
+  const [error, setError] = useState('');
+  const [filters, setFilters] = useState({ q: '', team: '', service: '', payment: '' });
+  const [openId, setOpenId] = useState(null);
+  const [sound, setSound] = useState(() => readJson('eag-kitchen-sound', false));
+  const [fresh, setFresh] = useState(new Set());
+  const [dragOver, setDragOver] = useState(null);
+  const [showAllDone, setShowAllDone] = useState(false);
+  const known = useRef(null);
+  const now = useNow(20000);
+  const columnsRef = useRef(null);
+
+  const load = useCallback(async () => {
+    try {
+      const result = await call(`/admin/kitchen?${period.query}`);
+      // Destaca (e avisa com som) pedidos que acabaram de chegar.
+      const ids = new Set(result.orders.map((o) => o.id));
+      if (known.current) {
+        const arrived = [...ids].filter((id) => !known.current.has(id));
+        if (arrived.length) {
+          setFresh((current) => new Set([...current, ...arrived]));
+          setTimeout(() => setFresh((current) => new Set([...current].filter((id) => !arrived.includes(id)))), 15000);
+          if (readJson('eag-kitchen-sound', false)) beep();
+        }
+      }
+      known.current = ids;
+      setData(result); setError('');
+    } catch (err) { setError(err.message); }
+  }, [call, period.query]);
+  useEffect(() => { known.current = null; load(); }, [load]);
+  useLiveRefresh(load);
+  // Conferência periódica caso algum evento em tempo real se perca.
+  useEffect(() => { const timer = setInterval(load, 60000); return () => clearInterval(timer); }, [load]);
+
+  const { move, busyId } = useProductionMove(load);
+  const toggleSound = () => { const value = !sound; setSound(value); writeJson('eag-kitchen-sound', value); if (value) beep(); };
+
+  const teams = useMemo(() => [...new Set((data?.orders || []).map((o) => o.teamName))].sort(), [data]);
+  const filtered = useMemo(() => {
+    const term = filters.q.trim().toLowerCase().replace(/^#/, '');
+    return (data?.orders || []).filter((o) => (!term || String(o.ticket) === term || o.orderNumber.toLowerCase().includes(term) || o.buyerName.toLowerCase().includes(term))
+      && (!filters.team || o.teamName === filters.team) && (!filters.service || o.serviceType === filters.service) && (!filters.payment || o.paymentStatus === filters.payment));
+  }, [data, filters]);
+  const columns = useMemo(() => Object.fromEntries(PRODUCTION_STEPS.map((step) => {
+    const list = filtered.filter((o) => o.productionStatus === step);
+    // Mais antigos primeiro; finalizados mostram os mais recentes primeiro.
+    if (step === 'finalized') list.sort((a, b) => new Date(b.finalizedAt || 0) - new Date(a.finalizedAt || 0));
+    return [step, list];
+  })), [filtered]);
+
+  const onDrop = (step) => (event) => {
+    event.preventDefault();
+    setDragOver(null);
+    const id = Number(event.dataTransfer.getData('text/plain'));
+    const order = data?.orders.find((o) => o.id === id);
+    if (!order || order.productionStatus === step) return;
+    const { next, previous } = productionActions(order, user.role);
+    if (step !== next && step !== previous) return;
+    if (step === 'in_production' && next === step && data.requirePixConfirmation && order.paymentMethod === 'pix' && !order.onCredit && order.paymentStatus !== 'confirmed') return;
+    move(order, step);
+  };
+  const set = (key) => (event) => setFilters((current) => ({ ...current, [key]: event.target.value }));
+
+  return <div className="admin-page kitchen-page">
+    <header className="admin-page-head">
+      <div><h1>Cozinha / Produção</h1><p>Pedidos da lanchonete, do mais antigo para o mais novo em cada etapa.</p></div>
+      <button type="button" className="btn btn-outline btn-sm" onClick={toggleSound} title="Aviso sonoro de novo pedido">{sound ? <Bell size={15} /> : <BellOff size={15} />} Som {sound ? 'ligado' : 'desligado'}</button>
+    </header>
+
+    <div className="filters-bar">
+      <PeriodFilter period={period} />
+      <label className="search-field"><Search size={16} /><input value={filters.q} onChange={set('q')} placeholder="Senha, nº do pedido ou cliente" /></label>
+      <select value={filters.team} onChange={set('team')} aria-label="Equipe"><option value="">Todas as equipes</option>{teams.map((t) => <option key={t} value={t}>{t}</option>)}</select>
+      <select value={filters.service} onChange={set('service')} aria-label="Atendimento"><option value="">Todo atendimento</option>{Object.entries(SERVICE_TYPES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
+      <select value={filters.payment} onChange={set('payment')} aria-label="Pagamento"><option value="">Todo pagamento</option>{Object.entries(PAYMENT_STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</select>
+    </div>
+
+    {data?.staleOpen > 0 && <p className="alert alert-warning"><AlertTriangle size={17} /> Há {data.staleOpen} {data.staleOpen === 1 ? 'pedido em aberto' : 'pedidos em aberto'} de dias anteriores ao período exibido.
+      <button type="button" className="btn btn-sm btn-outline" onClick={() => period.setPreset('week')}>Ver últimos 7 dias</button></p>}
+
+    {error && !data ? <ErrorState message={error} onRetry={load} /> : !data ? <Spinner /> : <>
+      {error && <p className="alert alert-error">{error}</p>}
+      <nav className="k-jump" aria-label="Ir para coluna">
+        {PRODUCTION_STEPS.map((step) => <button type="button" key={step} onClick={() => columnsRef.current?.querySelector(`[data-step="${step}"]`)?.scrollIntoView({ behavior: 'smooth', inline: 'start', block: 'nearest' })}>
+          {PRODUCTION_LABELS[step]} <b>{columns[step].length}</b></button>)}
+      </nav>
+      <div className="kanban" ref={columnsRef}>
+        {PRODUCTION_STEPS.map((step) => {
+          const list = step === 'finalized' && !showAllDone ? columns[step].slice(0, 20) : columns[step];
+          return <section key={step} data-step={step} className={`k-col k-col-${step} ${dragOver === step ? 'drag-over' : ''}`}
+            onDragOver={(event) => { event.preventDefault(); setDragOver(step); }} onDragLeave={() => setDragOver(null)} onDrop={onDrop(step)}>
+            <header><h2>{PRODUCTION_LABELS[step]}</h2><span className="k-count">{columns[step].length}</span></header>
+            <div className="k-list">
+              {list.length === 0 ? <p className="k-empty">Nenhum pedido</p> : list.map((order) => <KitchenCard key={order.id} order={order} now={now} role={user.role}
+                requirePix={data.requirePixConfirmation} busy={busyId === order.id} onMove={move} onOpen={setOpenId} fresh={fresh.has(order.id)} />)}
+              {step === 'finalized' && columns[step].length > 20 && <button type="button" className="btn btn-ghost btn-sm" onClick={() => setShowAllDone((v) => !v)}>
+                {showAllDone ? 'Mostrar menos' : `Mostrar todos (${columns[step].length})`}</button>}
+            </div>
+          </section>;
+        })}
+      </div>
+    </>}
+    {openId && <OrderDetail orderId={openId} onClose={() => setOpenId(null)} onChanged={load} />}
+  </div>;
+}
