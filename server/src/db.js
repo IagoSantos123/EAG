@@ -350,6 +350,18 @@ const MIGRATIONS = [
         await client.query("UPDATE products SET image_url=$1, updated_at=NOW() WHERE seed_key=$2 AND COALESCE(image_url,'')=''", [image, key]);
       }
     }
+  },
+  {
+    // Cobrança PIX gerada pelo Mercado Pago (QR Code dinâmico com confirmação automática).
+    id: '2026-10-005-pix-mercado-pago',
+    async run(client) {
+      await client.query(`
+        ALTER TABLE orders ADD COLUMN IF NOT EXISTS mp_payment_id TEXT;
+        ALTER TABLE orders ADD COLUMN IF NOT EXISTS mp_qr_code TEXT;
+        ALTER TABLE orders ADD COLUMN IF NOT EXISTS mp_qr_base64 TEXT;
+        CREATE UNIQUE INDEX IF NOT EXISTS orders_mp_payment_idx ON orders(mp_payment_id) WHERE mp_payment_id IS NOT NULL;
+      `);
+    }
   }
 ];
 

@@ -39,14 +39,15 @@ function ReadyBanner({ order }) {
   return null;
 }
 
-function PaymentCard({ order, onClaim, claiming }) {
+function PaymentCard({ order, onClaim, claiming, pixError, onRetryPix }) {
   const toast = useToast();
   const countdown = useCountdown(order.paymentMethod === 'pix' && order.paymentStatus === 'awaiting_payment' ? order.expiresAt : null);
   const status = PAYMENT_STATUS[order.paymentStatus];
-  const copy = async () => {
-    try { await navigator.clipboard.writeText(order.pix?.key || ''); toast('Chave PIX copiada!'); }
-    catch { toast('Não foi possível copiar. Selecione a chave e copie manualmente.', 'error'); }
+  const copy = async (text, done) => {
+    try { await navigator.clipboard.writeText(text || ''); toast(done); }
+    catch { toast('Não foi possível copiar. Selecione o código e copie manualmente.', 'error'); }
   };
+  const awaitingPix = order.paymentMethod === 'pix' && order.paymentStatus === 'awaiting_payment' && order.status === 'active';
   return <section className="track-card">
     <header><h2>Pagamento</h2><Badge tone={status?.tone}>{status?.label}</Badge></header>
     <div className="pay-lines">
@@ -56,14 +57,28 @@ function PaymentCard({ order, onClaim, claiming }) {
       {order.cashChangeFor && <div><span>Troco para</span><b>{money(order.cashChangeFor)}</b></div>}
     </div>
 
-    {order.paymentStatus === 'confirmed' && <p className="alert alert-success"><CheckCircle2 size={17} /> Pagamento confirmado pela equipe.</p>}
+    {order.paymentStatus === 'confirmed' && <p className="alert alert-success"><CheckCircle2 size={17} /> Pagamento confirmado.</p>}
     {order.paymentStatus === 'refunded' && <p className="alert alert-info">O valor deste pedido foi estornado.</p>}
 
-    {order.paymentMethod === 'pix' && order.paymentStatus === 'awaiting_payment' && order.status === 'active' && order.pix && <div className="pix-box">
+    {awaitingPix && order.pixAutomatic && <div className="pix-box">
+      <div className="pix-head"><span>Pague {money(order.balance)} via PIX</span>
+        <span className={`countdown ${countdown.expired ? 'over' : ''}`}><Clock3 size={15} /> {countdown.text}</span></div>
+      {order.pixCharge ? <>
+        {order.pixCharge.qrCodeBase64 && <img className="pix-qr" src={`data:image/png;base64,${order.pixCharge.qrCodeBase64}`} alt="QR Code do PIX" width="220" height="220" />}
+        <div className="pix-key"><small>PIX copia e cola</small><code>{order.pixCharge.qrCode}</code>
+          <button type="button" className="btn btn-outline btn-sm" onClick={() => copy(order.pixCharge.qrCode, 'Código PIX copiado!')}><Copy size={15} /> Copiar código</button></div>
+        <p className="muted small">Abra o app do seu banco, escolha pagar com PIX e leia o QR Code ou cole o código. A confirmação é automática: esta tela atualiza sozinha.</p>
+      </> : pixError
+        ? <><p className="alert alert-warning"><AlertTriangle size={17} /> {pixError}</p>
+          <button type="button" className="btn btn-primary btn-block" onClick={onRetryPix}>Gerar QR Code de novo</button></>
+        : <Spinner label="Gerando o QR Code do PIX..." />}
+    </div>}
+
+    {awaitingPix && order.pix && <div className="pix-box">
       <div className="pix-head"><span>Pague {money(order.balance)} via PIX</span>
         <span className={`countdown ${countdown.expired ? 'over' : ''}`}><Clock3 size={15} /> {countdown.text}</span></div>
       <div className="pix-key"><small>Chave PIX ({order.pix.type})</small><code>{order.pix.key}</code>
-        <button type="button" className="btn btn-outline btn-sm" onClick={copy}><Copy size={15} /> Copiar chave</button></div>
+        <button type="button" className="btn btn-outline btn-sm" onClick={() => copy(order.pix.key, 'Chave PIX copiada!')}><Copy size={15} /> Copiar chave</button></div>
       <p className="muted small">Beneficiário: <b>{order.pix.beneficiary}</b>{order.pix.city ? ` · ${order.pix.city}` : ''}</p>
       {order.pix.instructions && <p className="small">{order.pix.instructions}</p>}
       <button type="button" className="btn btn-primary btn-block" disabled={claiming || countdown.expired} onClick={onClaim}><Check size={17} /> Já paguei — pedir conferência</button>
@@ -87,6 +102,7 @@ export default function Tracking({ token }) {
   const [error, setError] = useState('');
   const [live, setLive] = useState(false);
   const [claiming, setClaiming] = useState(false);
+  const [pixError, setPixError] = useState('');
 
   const loaded = useRef(null);
 
@@ -116,6 +132,23 @@ export default function Tracking({ token }) {
     const timer = setTimeout(load, Math.max(1000, wait));
     return () => clearTimeout(timer);
   }, [order?.expiresAt, order?.paymentStatus, order?.status, load]);
+
+  // PIX automático: gera o QR Code se ainda não existir e confere no Mercado Pago enquanto aguarda.
+  const waitingAutoPix = Boolean(order?.pixAutomatic && order.status === 'active' && order.paymentMethod === 'pix' && order.paymentStatus === 'awaiting_payment');
+  // Tentar de novo só limpa o erro: o efeito abaixo gera o QR Code (uma chamada por vez).
+  const createPix = useCallback(async () => {
+    try { await request(`/orders/${token}/pix`, { method: 'POST' }); await load(); }
+    catch (err) { setPixError(err.message); }
+  }, [token, load]);
+  useEffect(() => { if (waitingAutoPix && !order.pixCharge && !pixError) createPix(); }, [waitingAutoPix, order?.pixCharge, pixError, createPix]);
+  useEffect(() => {
+    if (!waitingAutoPix || !order.pixCharge) return undefined;
+    const timer = setInterval(async () => {
+      try { const result = await request(`/orders/${token}/pix/check`, { method: 'POST' }); if (result.paymentStatus !== 'awaiting_payment') await load(); }
+      catch { /* tenta de novo no próximo ciclo */ }
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [waitingAutoPix, order?.pixCharge, token, load]);
 
   const claim = async () => {
     const ok = await confirm({ title: 'Você já fez o PIX?', message: `Confirme somente depois de concluir a transferência de ${money(order.balance)} para a chave informada.`, confirmLabel: 'Sim, já paguei' });
@@ -168,7 +201,7 @@ export default function Tracking({ token }) {
         {order.serviceType === 'delivery' && <p className="small"><b>Entrega em:</b> {order.deliveryAddress}{order.deliveryReference ? ` — ${order.deliveryReference}` : ''}</p>}
       </section>
 
-      <PaymentCard order={order} onClaim={claim} claiming={claiming} />
+      <PaymentCard order={order} onClaim={claim} claiming={claiming} pixError={pixError} onRetryPix={() => setPixError('')} />
     </div>
 
     <section className="track-card">

@@ -8,6 +8,7 @@ import { PRODUCTION_FLOW, PRODUCTION_TIMESTAMP, SERVICE_LABELS, addHistory, opti
 import { publicOrderSchema, validateOrder, insertOrder, availableServices, enabledPaymentMethods } from '../lib/create-order.js';
 import { expireDueOrders } from '../lib/expiry.js';
 import { publish, openStream } from '../lib/events.js';
+import { mercadoPagoEnabled, ensurePixCharge, pixCharge, syncPixPayment, validWebhookSignature } from '../lib/mercadopago.js';
 
 const router = Router();
 const modeSchema = z.enum(['religious', 'snack']);
@@ -17,6 +18,9 @@ const orderLimiter = rateLimit({ windowMs: 10 * 60 * 1000, limit: 30, standardHe
   message: { error: 'Muitos pedidos em sequência. Aguarde alguns minutos e tente novamente.' } });
 const claimLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 10, standardHeaders: true, legacyHeaders: false,
   message: { error: 'Muitas tentativas. Procure a equipe financeira.' } });
+// A tela do pedido confere o PIX a cada poucos segundos enquanto mostra o QR Code.
+const pixLimiter = rateLimit({ windowMs: 10 * 60 * 1000, limit: 150, standardHeaders: true, legacyHeaders: false,
+  message: { error: 'Muitas consultas seguidas. Aguarde alguns minutos.' } });
 
 // Opções de atendimento e pagamento disponíveis conforme a configuração administrativa.
 export function publicOptions(settings) {
@@ -24,6 +28,7 @@ export function publicOptions(settings) {
   const methods = settings.payment_methods || {};
   return {
     paymentMethods: enabledPaymentMethods(settings),
+    pixAutomatic: mercadoPagoEnabled(),
     selfCredit: Boolean(methods.fiado_self),
     serviceTypes: availableServices('snack', settings),
     religiousServiceTypes: availableServices('religious', settings),
@@ -123,6 +128,10 @@ router.post('/orders', orderLimiter, asyncRoute(async (req, res) => {
   try {
     const row = await withTransaction(pool, (db) => insertOrder(db, input, settings, { paymentMethod: input.paymentMethod, onCredit: fiado, deliveryFeeCents, tableNumber }));
     publish('order', { orderId: row.id, created: true, mode: row.mode });
+    // Já deixa o QR Code pronto; se o Mercado Pago falhar agora, a tela do pedido tenta de novo.
+    if (row.payment_method === 'pix' && !row.on_credit && mercadoPagoEnabled()) {
+      await ensurePixCharge(row.id).catch((error) => console.error(`PIX do pedido ${row.order_number}:`, error.message));
+    }
     res.status(201).json(orderResponse(row));
   } catch (error) {
     // Dois envios simultâneos com o mesmo identificador: devolve o que foi gravado.
@@ -210,7 +219,9 @@ router.get('/orders/:token', asyncRoute(async (req, res) => {
     expiresAt: order.expires_at,
     instructions: options.instructions[order.service_type] || '',
     contactPhone: options.contactPhone,
-    pix: order.payment_method === 'pix' ? options.pix : null
+    pixAutomatic: order.payment_method === 'pix' && (Boolean(order.mp_payment_id) || mercadoPagoEnabled()),
+    pixCharge: pixCharge(order),
+    pix: order.payment_method === 'pix' && !order.mp_payment_id && !mercadoPagoEnabled() ? options.pix : null
   });
 }));
 
@@ -225,7 +236,7 @@ router.post('/orders/:token/claim-payment', claimLimiter, asyncRoute(async (req,
   if (!order) return fail(res, 404, 'Pedido não encontrado.');
   const updated = await withTransaction(pool, async (db) => {
     const result = await db.query(`UPDATE orders SET payment_status='pending_review', payment_claimed_at=NOW(), updated_at=NOW()
-      WHERE id=$1 AND status='active' AND payment_method='pix' AND payment_status='awaiting_payment' AND (expires_at IS NULL OR expires_at>NOW())
+      WHERE id=$1 AND status='active' AND payment_method='pix' AND payment_status='awaiting_payment' AND mp_payment_id IS NULL AND (expires_at IS NULL OR expires_at>NOW())
       RETURNING id`, [order.id]);
     if (!result.rowCount) return false;
     await addHistory(db, { orderId: order.id, kind: 'payment', status: 'claimed', note: 'Comprador informou que fez o PIX', actor: { name: 'Comprador' } });
@@ -234,6 +245,33 @@ router.post('/orders/:token/claim-payment', claimLimiter, asyncRoute(async (req,
   if (!updated) return fail(res, 409, 'Pedido expirado ou já enviado para conferência. Se pagou após o prazo, procure a equipe financeira.');
   publish('order', { orderId: Number(order.id) });
   res.json({ ok: true, message: 'Solicitação registrada. A equipe financeira ainda precisa conferir o recebimento.' });
+}));
+
+// PIX automático: gera (ou devolve) o QR Code do Mercado Pago para o pedido.
+router.post('/orders/:token/pix', pixLimiter, asyncRoute(async (req, res) => {
+  const order = await findByToken(req.params.token);
+  if (!order) return fail(res, 404, 'Pedido não encontrado.');
+  res.json(await ensurePixCharge(order.id));
+}));
+
+// Confere no Mercado Pago se o PIX já caiu (complementa o webhook, que pode atrasar ou não chegar).
+router.post('/orders/:token/pix/check', pixLimiter, asyncRoute(async (req, res) => {
+  const order = await findByToken(req.params.token);
+  if (!order) return fail(res, 404, 'Pedido não encontrado.');
+  if (order.mp_payment_id && ['awaiting_payment', 'partial'].includes(order.payment_status)) await syncPixPayment(order.mp_payment_id);
+  const { rows } = await pool.query('SELECT payment_status FROM orders WHERE id=$1', [order.id]);
+  res.json({ paymentStatus: rows[0].payment_status });
+}));
+
+// Notificações do Mercado Pago. O conteúdo é só um aviso: o pagamento é sempre consultado na API deles.
+router.post('/mercadopago/webhook', asyncRoute(async (req, res) => {
+  const type = req.query.type || req.query.topic || req.body?.type;
+  const id = String(req.query['data.id'] || req.body?.data?.id || req.query.id || '');
+  if (type !== 'payment' || !/^\d{1,30}$/.test(id)) return res.sendStatus(200);
+  if (!mercadoPagoEnabled()) return res.sendStatus(200);
+  if (!validWebhookSignature(req, id)) return fail(res, 401, 'Assinatura inválida.');
+  await syncPixPayment(id);
+  res.sendStatus(200);
 }));
 
 export default router;

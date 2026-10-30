@@ -6,6 +6,7 @@ import { auth, can } from '../lib/auth.js';
 import { markCredit, registerPayments, paymentLinesSchema } from '../lib/payments.js';
 import { staffOrderSchema, validateOrder, insertOrder } from '../lib/create-order.js';
 import { expireDueOrders } from '../lib/expiry.js';
+import { cancelPixCharges } from '../lib/mercadopago.js';
 import { asyncRoute, fail, parse, toId, toMoney, withTransaction, HttpError } from '../lib/http.js';
 import { readPeriod, periodSql, TIMEZONE } from '../lib/time.js';
 import {
@@ -152,7 +153,7 @@ const cancelSchema = z.object({
 router.post('/orders/:id/cancel', auth('orders.cancel'), asyncRoute(async (req, res) => {
   const id = toId(req.params.id);
   const input = parse(cancelSchema, req.body);
-  await withTransaction(pool, async (db) => {
+  const cancelled = await withTransaction(pool, async (db) => {
     const found = await db.query('SELECT * FROM orders WHERE id=$1 FOR UPDATE', [id]);
     if (!found.rowCount) throw new HttpError(404, 'Pedido não encontrado.');
     const order = found.rows[0];
@@ -175,7 +176,10 @@ router.post('/orders/:id/cancel', auth('orders.cancel'), asyncRoute(async (req, 
     await db.query(`UPDATE orders SET status='cancelled', cancelled_at=NOW(), cancel_reason=$1, updated_at=NOW() WHERE id=$2`, [input.reason, id]);
     await restock(db, order);
     await addHistory(db, { orderId: id, kind: 'order', status: 'cancelled', fromStatus: order.status, note: input.reason, actor: req.user });
+    return order;
   });
+  // PIX ainda não pago: a cobrança no Mercado Pago deixa de valer. PIX já recebido é devolvido pelo painel do Mercado Pago.
+  if (cancelled.paid_cents - cancelled.refunded_cents <= 0) await cancelPixCharges([cancelled.mp_payment_id]);
   publish('order', { orderId: id });
   publish('payment', { orderId: id });
   res.json({ ok: true });

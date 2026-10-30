@@ -44,7 +44,7 @@ As permissões são verificadas no servidor a cada requisição (desativar um us
 
 Requisitos: Node 18.18+ (20+ recomendado) e PostgreSQL 14+.
 
-1. Copie `.env.example` para `.env` na raiz e preencha `DATABASE_URL`, `JWT_SECRET` (32+ caracteres) e o administrador inicial.
+1. Copie `server/.env.example` para `server/.env` (a API roda dentro de `server/` e lê o `.env` de lá) e preencha `DATABASE_URL`, `JWT_SECRET` (32+ caracteres) e o administrador inicial.
 2. `npm install && npm install --prefix server && npm install --prefix client`
 3. `npm run dev` → site em `http://localhost:5173`, API em `http://localhost:3001`.
 
@@ -58,6 +58,7 @@ Na primeira inicialização o servidor cria/atualiza as tabelas (migrações ver
 
 - Site estático (`client/dist`) + função `api/index.js` (mesmo app Express). `vercel.json` já configurado (região gru1).
 - Variáveis: `DATABASE_URL` e `DATABASE_URL_UNPOOLED` (criadas pela integração Neon), `JWT_SECRET`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_NAME`, `PAYMENT_PIX_*`, `APP_TIMEZONE`.
+- PIX automático (Mercado Pago): `MP_ACCESS_TOKEN` (Access Token de produção, em "Suas integrações" no painel do Mercado Pago), `MP_WEBHOOK_SECRET` (assinatura secreta dos webhooks) e `MP_PAYER_EMAIL` (e-mail enviado como pagador, diferente do e-mail da conta). Opcional: `PUBLIC_URL` (endereço do site, para o webhook; na Vercel usa o domínio de produção). No painel, cadastre o webhook `https://<site>/api/mercadopago/webhook` com o evento "Pagamentos". Sem `MP_ACCESS_TOKEN`, o site volta para a chave PIX fixa com conferência manual.
 - Na Vercel não há conexão persistente: as telas se atualizam sozinhas a cada ~8 segundos. Rodando com `npm start` em servidor próprio, a atualização é instantânea (SSE).
 - Deploy: `vercel deploy --prod`.
 

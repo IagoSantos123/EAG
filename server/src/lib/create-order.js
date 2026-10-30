@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { HttpError, toCents, toMoney } from './http.js';
 import { localDate, TIMEZONE } from './time.js';
 import { PAYMENT_METHODS, SERVICE_TYPES, priceItem, addHistory } from './orders.js';
+import { mercadoPagoEnabled } from './mercadopago.js';
 
 const optionalId = z.preprocess((value) => (value === '' || value == null ? null : Number(value)), z.number().int().positive().nullable());
 const phoneDigits = (value) => value.replace(/\D/g, '');
@@ -50,7 +51,7 @@ export function availableServices(mode, settings) {
 
 export function enabledPaymentMethods(settings) {
   const methods = settings.payment_methods || {};
-  return [...(settings.pix?.key ? ['pix'] : []), ...(methods.cash ? ['cash'] : []), ...(methods.debit ? ['debit'] : []), ...(methods.credit ? ['credit'] : [])];
+  return [...(settings.pix?.key || mercadoPagoEnabled() ? ['pix'] : []), ...(methods.cash ? ['cash'] : []), ...(methods.debit ? ['debit'] : []), ...(methods.credit ? ['credit'] : [])];
 }
 
 // Regras de atendimento comuns. `staff` relaxa apenas o que a equipe precisa (ex.: modalidade desativada no site).

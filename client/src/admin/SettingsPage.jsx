@@ -80,7 +80,7 @@ export default function SettingsPage() {
         <Field label="Orientações ao comprador"><textarea rows={2} maxLength={1000} value={pix.instructions} onChange={(e) => set('pix', 'instructions', e.target.value)} /></Field>
       </Section>
 
-      <Section title="Formas de pagamento" description="PIX fica sempre disponível (quando há chave configurada). Desativar uma forma remove a opção do site e do registro de recebimentos." onSave={() => save(['payment_methods'])} busy={busy}>
+      <Section title="Formas de pagamento" description="PIX fica sempre disponível (quando há chave configurada ou o Mercado Pago está ligado; com o Mercado Pago, o PIX do site é gerado e confirmado automaticamente). Desativar uma forma remove a opção do site e do registro de recebimentos." onSave={() => save(['payment_methods'])} busy={busy}>
         <Toggle checked={methods.cash} onChange={(v) => set('payment_methods', 'cash', v)} label="Dinheiro" />
         <Toggle checked={methods.debit} onChange={(v) => set('payment_methods', 'debit', v)} label="Cartão de débito" />
         <Toggle checked={methods.credit} onChange={(v) => set('payment_methods', 'credit', v)} label="Cartão de crédito" />

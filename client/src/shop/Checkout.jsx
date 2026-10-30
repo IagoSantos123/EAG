@@ -213,7 +213,7 @@ export function CheckoutPage({ mode, cart, config }) {
                 const Icon = METHOD_ICONS[method];
                 return <label key={method} className={`choice-card ${form.paymentMethod === method ? 'selected' : ''}`}>
                   <input type="radio" name="paymentMethod" checked={form.paymentMethod === method} onChange={() => set('paymentMethod', method)} />
-                  <Icon size={22} /><b>{PAYMENT_METHODS[method]}</b><small>{METHOD_HINTS[method]}</small>
+                  <Icon size={22} /><b>{PAYMENT_METHODS[method]}</b><small>{method === 'pix' && config?.pixAutomatic ? 'QR Code na próxima tela, confirmação automática.' : METHOD_HINTS[method]}</small>
                 </label>;
               })}
             </div>}

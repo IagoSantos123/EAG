@@ -57,21 +57,25 @@ export async function registerPayments(db, { orderId, lines, note = '', idempote
     const description = parsed.map((line) => `${PAYMENT_METHOD_LABELS[line.method]} ${money(line.cents)}`).join(' + ');
     await addHistory(db, { orderId, kind: 'payment', status: 'confirmed', note: `${order.on_credit ? 'Baixa de fiado' : 'Recebimento registrado'}: ${description}${creditCents ? ` (fica no fiado: ${money(creditCents)})` : ''}`, actor });
   }
-  if (order.status === 'expired') {
-    await db.query("UPDATE orders SET status='active', updated_at=NOW() WHERE id=$1", [orderId]);
-    await addHistory(db, { orderId, kind: 'order', status: 'reactivated', fromStatus: 'expired', note: 'Pedido reativado após confirmação do pagamento', actor });
-    if (order.restocked) {
-      for (const item of order.items || []) {
-        await db.query('UPDATE products SET stock=GREATEST(stock-$1,0), updated_at=NOW() WHERE id=$2 AND stock IS NOT NULL', [item.quantity, item.productId]);
-      }
-      await db.query('UPDATE orders SET restocked=FALSE WHERE id=$1', [orderId]);
-    }
-  }
+  await reactivateExpired(db, order, actor);
   const payment = await recomputePayment(db, orderId);
   // A parte restante vai para o fiado (exige nome e telefone do cliente).
   if (creditCents) await markCredit(db, { orderId, actor, note: parsed.length ? 'Pagamento dividido: parte paga, restante no fiado' : '' });
   const change = parsed.reduce((total, line) => total + (line.method === 'cash' && line.tenderedCents != null ? line.tenderedCents - line.cents : 0), 0);
   return { payment, change, credit: creditCents };
+}
+
+// Pagamento confirmado depois do prazo: o pedido expirado volta a valer e os itens saem de novo do estoque.
+export async function reactivateExpired(db, order, actor) {
+  if (order.status !== 'expired') return;
+  await db.query("UPDATE orders SET status='active', updated_at=NOW() WHERE id=$1", [order.id]);
+  await addHistory(db, { orderId: order.id, kind: 'order', status: 'reactivated', fromStatus: 'expired', note: 'Pedido reativado após confirmação do pagamento', actor });
+  if (order.restocked) {
+    for (const item of order.items || []) {
+      await db.query('UPDATE products SET stock=GREATEST(stock-$1,0), updated_at=NOW() WHERE id=$2 AND stock IS NOT NULL', [item.quantity, item.productId]);
+    }
+    await db.query('UPDATE orders SET restocked=FALSE WHERE id=$1', [order.id]);
+  }
 }
 
 // Lança o saldo em aberto como fiado (a receber), identificando quem autorizou.
