@@ -5,7 +5,10 @@ import { readJson, writeJson } from '../lib/storage.js';
 const KEY = 'eag-carts-v2';
 const empty = { snack: [], religious: [] };
 
-const sameLine = (a, b) => a.productId === b.productId && a.note === b.note && a.customText === b.customText
+// Teto de unidades por linha: o estoque do produto (gravado ao adicionar) ou 30.
+const limit = (item) => item.maxQuantity ?? 30;
+
+const sameLine =(a, b) => a.productId === b.productId && a.note === b.note && a.customText === b.customText
   && JSON.stringify(a.selectedOptions) === JSON.stringify(b.selectedOptions);
 
 export function useCarts() {
@@ -19,12 +22,12 @@ export function useCarts() {
     const list = current[mode];
     const existing = list.find((item) => sameLine(item, line));
     const next = existing
-      ? list.map((item) => (item === existing ? { ...item, quantity: Math.min(30, item.quantity + line.quantity) } : item))
+      ? list.map((item) => (item === existing ? { ...item, maxQuantity: line.maxQuantity, quantity: Math.min(limit(line), item.quantity + line.quantity) } : item))
       : [...list, { ...line, key: `${line.productId}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}` }];
     return { ...current, [mode]: next };
   }), []);
   const setQuantity = useCallback((mode, key, quantity) => setCarts((current) => ({
-    ...current, [mode]: current[mode].map((item) => (item.key === key ? { ...item, quantity: Math.max(1, Math.min(30, quantity)) } : item))
+    ...current, [mode]: current[mode].map((item) => (item.key === key ? { ...item, quantity: Math.max(1, Math.min(limit(item), quantity)) } : item))
   })), []);
   const remove = useCallback((mode, key) => setCarts((current) => ({ ...current, [mode]: current[mode].filter((item) => item.key !== key) })), []);
   const clear = useCallback((mode) => setCarts((current) => ({ ...current, [mode]: [] })), []);
@@ -43,7 +46,13 @@ export function useCarts() {
       }, 0);
       const valid = item.selectedOptions.every((choice) => product.optionGroups.find((g) => g.name === choice.group)?.options.some((o) => o.name === choice.option));
       if (!valid) { changed = true; return []; }
-      if (unitPrice !== item.unitPrice || product.name !== item.name) { changed = true; return [{ ...item, unitPrice, name: product.name }]; }
+      // O estoque pode ter baixado desde que o item entrou na sacola.
+      const maxQuantity = product.stock == null ? 30 : Math.min(30, product.stock);
+      const quantity = Math.min(item.quantity, Math.max(1, maxQuantity));
+      if (unitPrice !== item.unitPrice || product.name !== item.name || maxQuantity !== item.maxQuantity || quantity !== item.quantity) {
+        changed = true;
+        return [{ ...item, unitPrice, name: product.name, maxQuantity, quantity }];
+      }
       return [item];
     });
     return changed ? { ...current, [mode]: next } : current;

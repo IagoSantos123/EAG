@@ -16,6 +16,8 @@ export default function ProductModal({ product, onClose, onAdd }) {
   const [note, setNote] = useState('');
   const [customText, setCustomText] = useState('');
   const [tried, setTried] = useState(false);
+  // Produto com estoque controlado não deixa escolher mais do que existe (o servidor também confere).
+  const maxQuantity = product.stock == null ? 30 : Math.min(30, product.stock);
 
   const toggle = (group, option) => setChoices((current) => {
     const chosen = current[group.name] || [];
@@ -44,7 +46,7 @@ export default function ProductModal({ product, onClose, onAdd }) {
       productId: product.id, name: product.name, unitPrice, quantity, selectedOptions,
       optionLabels: selectedOptions.map((choice) => choice.option), note: product.allowNotes ? note.trim() : '',
       customText: product.customTextLabel ? customText.trim() : '', customTextLabel: product.customTextLabel || '',
-      imageUrl: product.imageUrl, category: product.category
+      imageUrl: product.imageUrl, category: product.category, maxQuantity
     });
     toast(`${quantity}× ${product.name} adicionado à sacola.`);
   };
@@ -54,7 +56,7 @@ export default function ProductModal({ product, onClose, onAdd }) {
       <div className="qty" aria-label="Quantidade">
         <button type="button" onClick={() => setQuantity((q) => Math.max(1, q - 1))} aria-label="Diminuir"><Minus size={16} /></button>
         <span>{quantity}</span>
-        <button type="button" onClick={() => setQuantity((q) => Math.min(30, q + 1))} aria-label="Aumentar"><Plus size={16} /></button>
+        <button type="button" onClick={() => setQuantity((q) => Math.min(maxQuantity, q + 1))} disabled={quantity >= maxQuantity} aria-label="Aumentar"><Plus size={16} /></button>
       </div>
       <button type="button" className="btn btn-primary btn-grow" onClick={submit}>Adicionar · {money(unitPrice * quantity)}</button>
     </div>}>
@@ -92,7 +94,7 @@ export default function ProductModal({ product, onClose, onAdd }) {
 
     {product.allowNotes && <label className="field">
       <span>Observações (opcional)</span>
-      <textarea rows={2} maxLength={300} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Ex.: sem cebola, bem passado..." />
+      <textarea rows={2} maxLength={300} value={note} onChange={(e) => setNote(e.target.value)} placeholder={product.mode === 'religious' ? 'Ex.: cor preferida ou um recado para a equipe...' : 'Ex.: sem cebola, bem passado...'} />
     </label>}
   </Modal>;
 }
