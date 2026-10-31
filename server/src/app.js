@@ -1,4 +1,6 @@
 import 'dotenv/config';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -14,6 +16,9 @@ import financeRoutes from './routes/finance.js';
 import adminRoutes from './routes/admin.js';
 
 if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) throw new Error('JWT_SECRET deve ter ao menos 32 caracteres.');
+
+// Modo local (evento sem internet): o próprio servidor entrega as telas, pela rede da sala, em http.
+const serveClient = process.env.SERVE_CLIENT === '1';
 
 const app = express();
 // Atrás do proxy da Vercel (ou outro), o IP real vem do cabeçalho X-Forwarded-For.
@@ -31,7 +36,8 @@ function ensureReady() {
 export const ready = ensureReady();
 ready.catch((error) => console.error('Falha ao preparar o banco:', error.message));
 app.use((req, res, next) => { ensureReady().then(() => next(), next); });
-app.use(helmet());
+// Em http na rede local, a política padrão forçaria https nos recursos da página; no modo local ela fica desligada.
+app.use(serveClient ? helmet({ contentSecurityPolicy: false, hsts: false, crossOriginOpenerPolicy: false }) : helmet());
 const origins = (process.env.CLIENT_ORIGIN || 'http://localhost:5173').split(',').map((origin) => origin.trim()).filter(Boolean);
 app.use(cors({ origin: origins }));
 // O upload de imagens tem limite próprio (definido na rota); o restante da API aceita até 1 MB.
@@ -59,6 +65,13 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/finance', financeRoutes);
 
 app.use('/api', (_req, res) => fail(res, 404, 'Rota não encontrada.'));
+
+if (serveClient) {
+  const dist = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../client/dist');
+  // index.html sem cache (atualizações aparecem ao recarregar); os arquivos com hash no nome podem ficar em cache.
+  app.use(express.static(dist, { index: false, setHeaders: (res, file) => { if (file.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache'); } }));
+  app.get('*', (_req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(dist, 'index.html')); });
+}
 
 app.use((error, _req, res, _next) => {
   if (error instanceof HttpError) return fail(res, error.status, error.message, error.code);

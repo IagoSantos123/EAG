@@ -7,6 +7,7 @@ import { asyncRoute, fail, parse, toMoney, withTransaction, HttpError } from '..
 import { PRODUCTION_FLOW, PRODUCTION_TIMESTAMP, SERVICE_LABELS, addHistory, optionExtraCents, serializeItems, balanceCents } from '../lib/orders.js';
 import { publicOrderSchema, validateOrder, insertOrder, availableServices, enabledPaymentMethods } from '../lib/create-order.js';
 import { expireDueOrders } from '../lib/expiry.js';
+import { TIMEZONE } from '../lib/time.js';
 import { publish, openStream } from '../lib/events.js';
 import { mercadoPagoEnabled, ensurePixCharge, pixCharge, syncPixPayment, validWebhookSignature } from '../lib/mercadopago.js';
 
@@ -28,6 +29,7 @@ export function publicOptions(settings) {
   const methods = settings.payment_methods || {};
   return {
     paymentMethods: enabledPaymentMethods(settings),
+    sitePaused: Boolean(service.site_paused),
     pixAutomatic: mercadoPagoEnabled(),
     selfCredit: Boolean(methods.fiado_self),
     serviceTypes: availableServices('snack', settings),
@@ -44,7 +46,7 @@ export function publicOptions(settings) {
     contactPhone: settings.contact?.phone || '',
     pix: {
       key: settings.pix?.key || '', type: settings.pix?.type || '', beneficiary: settings.pix?.beneficiary || '',
-      city: settings.pix?.city || '', instructions: settings.pix?.instructions || ''
+      city: settings.pix?.city || '', instructions: settings.pix?.instructions || '', qrImage: settings.pix?.qr_image || ''
     },
     deadlineMinutes: Number(settings.payment_deadline_minutes || 15)
   };
@@ -65,6 +67,28 @@ router.get('/payment-info', asyncRoute(async (_req, res) => {
   const options = publicOptions(await readSettings());
   res.json({ ...options.pix, deadlineMinutes: options.deadlineMinutes });
 }));
+
+// Painel de senhas da TV: pedidos da lanchonete de hoje ainda não entregues, só com a senha e o primeiro nome.
+// (Artigos religiosos são entregues na hora, no balcão, e não passam pela cozinha.)
+router.get('/painel', asyncRoute(async (_req, res) => {
+  const { rows } = await pool.query(`SELECT ticket_number, buyer_name, mode, production_status,
+      COALESCE(ready_at, awaiting_pickup_at, created_at) AS since
+    FROM orders WHERE mode='snack' AND status='active' AND production_status<>'finalized' AND ticket_number IS NOT NULL
+      AND (created_at AT TIME ZONE $1)::date = (NOW() AT TIME ZONE $1)::date
+    ORDER BY ticket_number`, [TIMEZONE]);
+  const settings = await readSettings();
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({
+    orders: rows.map((row) => ({
+      ticket: row.ticket_number, firstName: (row.buyer_name || '').trim().split(/\s+/)[0] || '', mode: row.mode,
+      status: ['ready', 'awaiting_pickup'].includes(row.production_status) ? 'pronto' : 'preparo', since: row.since
+    })),
+    pixQr: settings.pix?.qr_image || '',
+    realtime: !process.env.VERCEL
+  });
+}));
+
+router.get('/painel/events', (req, res) => openStream(req, res, (event) => event.type === 'order'));
 
 router.get('/catalog', asyncRoute(async (req, res) => {
   const mode = modeSchema.safeParse(req.query.mode);
@@ -120,6 +144,7 @@ router.post('/orders', orderLimiter, asyncRoute(async (req, res) => {
   }
   const settings = await readSettings();
   const options = publicOptions(settings);
+  if (options.sitePaused) throw new HttpError(409, 'Os pedidos pelo site estão pausados. Faça seu pedido no balcão.', 'SITE_PAUSED');
   const fiado = input.paymentMethod === 'fiado';
   if (fiado ? !(options.selfCredit && input.serviceType === 'dine_in') : !options.paymentMethods.includes(input.paymentMethod)) {
     throw new HttpError(400, 'Forma de pagamento indisponível.');

@@ -8,6 +8,7 @@ import Catalog from './shop/Catalog.jsx';
 import { CartPage, CheckoutPage } from './shop/Checkout.jsx';
 import Tracking, { LookupPage, MyOrders } from './shop/Tracking.jsx';
 import AdminApp from './admin/AdminApp.jsx';
+import Painel from './shop/Painel.jsx';
 
 function Shop({ route }) {
   const cart = useCarts();
@@ -29,7 +30,9 @@ function Shop({ route }) {
   switch (route.name) {
     case 'catalog': page = <Catalog key={mode} mode={mode} cart={cart} config={config} />; break;
     case 'cart': page = <CartPage mode={mode} cart={cart} />; break;
-    case 'checkout': page = config ? <CheckoutPage mode={mode} cart={cart} config={config} />
+    case 'checkout': page = config?.sitePaused
+      ? <main className="page page-narrow"><p className="alert alert-warning">Os pedidos pelo site estão pausados. <b>Faça seu pedido no balcão.</b></p></main>
+      : config ? <CheckoutPage mode={mode} cart={cart} config={config} />
       : <main className="page page-narrow"><p className="alert alert-warning">{configError ? 'Sem conexão com o servidor. Tentando novamente...' : 'Carregando...'}</p></main>; break;
     case 'tracking': page = <Tracking token={route.params.token} />; break;
     case 'myOrders': page = <MyOrders />; break;
@@ -39,6 +42,7 @@ function Shop({ route }) {
   return <div className="shop">
     <ShopHeader route={route} mode={mode || 'snack'} count={cart.count(mode || 'snack')} />
     {configError && route.name === 'home' && <p className="alert alert-warning page-alert">Não foi possível conectar ao servidor. Verifique a internet; tentaremos novamente.</p>}
+    {config?.sitePaused && <p className="alert alert-warning page-alert">Os pedidos pelo site estão pausados no momento. <b>Faça seu pedido no balcão da lanchonete.</b></p>}
     {page}
     <ShopFooter contactPhone={config?.contactPhone} />
   </div>;
@@ -48,7 +52,7 @@ export default function App() {
   const route = useRoute();
   return <ToastProvider>
     <ConfirmProvider>
-      {route.name === 'admin' ? <AdminApp tab={route.params.tab} /> : <Shop route={route} />}
+      {route.name === 'admin' ? <AdminApp tab={route.params.tab} /> : route.name === 'painel' ? <Painel /> : <Shop route={route} />}
     </ConfirmProvider>
   </ToastProvider>;
 }

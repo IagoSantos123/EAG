@@ -213,7 +213,9 @@ router.patch('/teams/:id', auth('settings.manage'), asyncRoute(async (req, res) 
 const settingsSchemas = {
   pix: z.object({
     key: z.string().trim().max(250), type: z.string().trim().max(60), beneficiary: z.string().trim().max(120),
-    city: z.string().trim().max(80), instructions: z.string().trim().max(1000)
+    city: z.string().trim().max(80), instructions: z.string().trim().max(1000),
+    // Imagem do QR Code fixo (enviada como as fotos de produto), mostrada no balcão e no painel da TV.
+    qr_image: z.string().trim().max(200).regex(/^(\/api\/images\/\d+)?$/, 'Imagem do QR inválida.').default('')
   }),
   payment_deadline_minutes: z.number().int().min(5, 'Prazo mínimo: 5 minutos.').max(120, 'Prazo máximo: 120 minutos.'),
   payment_methods: z.object({ cash: z.boolean(), debit: z.boolean(), credit: z.boolean(), fiado_self: z.boolean().default(false) }),
@@ -221,7 +223,9 @@ const settingsSchemas = {
     dine_in: z.boolean(), delivery: z.boolean(), pickup: z.boolean(),
     delivery_fee: z.number().min(0, 'Taxa de entrega inválida.').max(1000),
     tables_enabled: z.boolean(), table_count: z.number().int().min(0).max(500),
-    delivery_instructions: z.string().trim().max(500), pickup_instructions: z.string().trim().max(500), dine_in_instructions: z.string().trim().max(500)
+    delivery_instructions: z.string().trim().max(500), pickup_instructions: z.string().trim().max(500), dine_in_instructions: z.string().trim().max(500),
+    // Evento rodando no modo local: o site da nuvem para de aceitar pedidos e pede para ir ao balcão.
+    site_paused: z.boolean().default(false)
   }).refine((s) => s.dine_in || s.delivery || s.pickup, 'Mantenha pelo menos uma modalidade de atendimento ativa.'),
   kitchen: z.object({ require_pix_confirmation: z.boolean() }),
   contact: z.object({ phone: z.string().trim().max(40) })

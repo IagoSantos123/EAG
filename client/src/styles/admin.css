@@ -269,3 +269,17 @@
 .open-cash p { margin: 0 0 8px; }
 .open-cash-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .open-cash-row .money-input { width: 150px; background: #fff; }
+
+/* Botões no cabeçalho de uma página do painel (ex.: cozinha: impressão e som). */
+.head-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* Venda no balcão: atalhos de forma de pagamento e QR do PIX fixo. */
+.pay-quick { margin-bottom: 10px; }
+.pay-quick button { flex: 1; justify-content: center; font-weight: 700; padding-block: 10px; }
+.pix-counter { display: flex; align-items: center; gap: 14px; background: var(--green-50); border: 1px solid #b7e1c7; border-radius: var(--radius); padding: 12px; margin-bottom: 10px; }
+.pix-counter img { width: 132px; height: 132px; object-fit: contain; background: #fff; border-radius: var(--radius-sm); flex: none; }
+.pix-counter p { margin: 0; display: grid; gap: 4px; }
+.pix-counter span { font-size: 13px; word-break: break-all; }
+.pix-counter small { color: var(--green); font-weight: 600; }
+.qr-setting { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.qr-setting img { width: 96px; height: 96px; object-fit: contain; border: 1px solid var(--line); border-radius: var(--radius-sm); background: #fff; }

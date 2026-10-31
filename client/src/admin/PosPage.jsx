@@ -1,8 +1,9 @@
 // Venda no balcão: a equipe registra o pedido, identifica o cliente e recebe na hora, deixa no fiado ou para pagar depois.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CheckCircle2, Minus, Plus, Search, Trash2 } from 'lucide-react';
+import { CheckCircle2, Minus, Plus, Printer, Search, Trash2 } from 'lucide-react';
 import { ErrorState, Modal, Spinner } from '../components/ui.jsx';
-import { money, request, uuid } from '../lib/api.js';
+import { imageUrl, money, request, uuid } from '../lib/api.js';
+import { printComanda } from './comanda.js';
 import { PAYMENT_METHODS, SERVICE_TYPES } from '../lib/labels.js';
 import { ProductThumb, startingPrice } from '../shop/productUtils.jsx';
 import ProductModal from '../shop/ProductModal.jsx';
@@ -179,6 +180,19 @@ export default function PosPage() {
           <button type="button" className={payType === 'later' ? 'active' : ''} onClick={() => setPayType('later')}>Pagar depois</button>
         </div>
         {payType === 'pay' && <>
+          {/* Atalho: o total inteiro numa forma só, com um toque. Para dividir, use as linhas abaixo. */}
+          <div className="segmented full pay-quick" role="group" aria-label="Forma de pagamento">
+            {methods.filter((m) => m !== 'fiado').map((method) => {
+              const active = payLines.length === 1 && payLines[0].method === method;
+              return <button type="button" key={method} className={active ? 'active' : ''}
+                onClick={() => setPayLines(newPaymentLines(totalCents, method))}>{PAYMENT_METHODS[method]}</button>;
+            })}
+          </div>
+          {payLines.length === 1 && payLines[0].method === 'pix' && <div className="pix-counter">
+            {config?.pix?.qrImage && <img src={imageUrl(config.pix.qrImage)} alt="QR Code do PIX" />}
+            <p><b>PIX de {money(totalCents / 100)}</b>{config?.pix?.key ? <span>Chave: {config.pix.key}</span> : null}
+              <small>Confira o recebimento no celular antes de concluir a venda.</small></p>
+          </div>}
           {!cashOpen && hasCashLine(payLines) && <OpenCashInline onOpened={checkCash} />}
           <PaymentLines lines={payLines} setLines={setPayLines} methods={methods} totalCents={totalCents} />
           {hasCreditLine(payLines) && <p className="muted small">A parte em "Fiado" fica anotada no nome do cliente (telefone obrigatório).</p>}
@@ -193,7 +207,10 @@ export default function PosPage() {
     </div>
 
     {configuring && <ProductModal product={configuring} onClose={() => setConfiguring(null)} onAdd={(line) => { addLine(line); setConfiguring(null); }} />}
-    {done && <Modal title="Venda registrada" onClose={() => setDone(null)} size="sm" footer={<button type="button" className="btn btn-primary" onClick={() => setDone(null)}>Nova venda</button>}>
+    {done && <Modal title="Venda registrada" onClose={() => setDone(null)} size="sm" footer={<>
+      {mode === 'snack' && <button type="button" className="btn btn-outline" onClick={() => call(`/admin/orders/${done.id}`).then(printComanda).catch(() => {})}>
+        <Printer size={16} /> Imprimir comanda</button>}
+      <button type="button" className="btn btn-primary" onClick={() => setDone(null)}>Nova venda</button></>}>
       <div className="pos-done">
         <CheckCircle2 size={40} />
         <span>Senha</span><b>#{done.ticket}</b>

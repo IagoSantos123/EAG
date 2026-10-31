@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
-    "test": "node --test test/"
+    "test": "node --test test/",
+    "local": "node scripts/local.js",
+    "importar": "node scripts/importar-da-nuvem.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -21,5 +23,8 @@
   },
   "engines": {
     "node": ">=18.18"
+  },
+  "devDependencies": {
+    "embedded-postgres": "17.10.0-beta.17"
   }
 }

@@ -1,7 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ArrowRight, Bell, BellOff, Clock3, MapPin, RotateCcw, Search } from 'lucide-react';
+import { AlertTriangle, ArrowRight, Bell, BellOff, Clock3, MapPin, Printer, RotateCcw, Search } from 'lucide-react';
 import { ErrorState, Spinner, useNow } from '../components/ui.jsx';
 import { elapsed, time } from '../lib/api.js';
+import { beep } from '../lib/beep.js';
+import { printComanda } from './comanda.js';
 import { ADVANCE_LABELS, PAYMENT_STATUS, PRODUCTION_LABELS, PRODUCTION_STEPS, SERVICE_TYPES } from '../lib/labels.js';
 import { readJson, writeJson } from '../lib/storage.js';
 import { useAdmin, useLiveRefresh } from './context.js';
@@ -18,20 +20,6 @@ function waitLevel(order, now) {
   if (!limits || !since) return '';
   const minutes = (now - new Date(since).getTime()) / 60000;
   return minutes >= limits[1] ? 'late' : minutes >= limits[0] ? 'warn' : '';
-}
-
-function beep() {
-  try {
-    const context = new (window.AudioContext || window.webkitAudioContext)();
-    const oscillator = context.createOscillator();
-    const gain = context.createGain();
-    oscillator.connect(gain); gain.connect(context.destination);
-    oscillator.frequency.value = 880;
-    gain.gain.setValueAtTime(0.18, context.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, context.currentTime + 0.6);
-    oscillator.start(); oscillator.stop(context.currentTime + 0.6);
-    oscillator.onended = () => context.close();
-  } catch { /* navegador sem áudio */ }
 }
 
 function KitchenCard({ order, now, role, requirePix, busy, onMove, onOpen, fresh }) {
@@ -55,12 +43,13 @@ function KitchenCard({ order, now, role, requirePix, busy, onMove, onOpen, fresh
       {order.productionStartedAt && order.productionStatus === 'in_production' && <small className="muted">Produção iniciada às {time(order.productionStartedAt)}</small>}
       <small className="k-number">{order.orderNumber}</small>
     </div>
-    {(next || previous) && <footer>
+    <footer>
+      <button type="button" className="icon-btn" title="Imprimir comanda" onClick={() => printComanda(order)}><Printer size={16} /></button>
       {previous && <button type="button" className="icon-btn" title="Voltar etapa (correção)" disabled={busy} onClick={() => onMove(order, previous)}><RotateCcw size={16} /></button>}
       {next && (waitingPix
         ? <span className="k-wait">Aguardando confirmação do PIX</span>
         : <button type="button" className={`btn btn-sm ${next === 'finalized' ? 'btn-success' : 'btn-primary'}`} disabled={busy} onClick={() => onMove(order, next)}>{ADVANCE_LABELS[next]} <ArrowRight size={15} /></button>)}
-    </footer>}
+    </footer>
   </article>;
 }
 
@@ -90,6 +79,8 @@ export default function KitchenPage() {
           setFresh((current) => new Set([...current, ...arrived]));
           setTimeout(() => setFresh((current) => new Set([...current].filter((id) => !arrived.includes(id)))), 15000);
           if (readJson('eag-kitchen-sound', false)) beep();
+          // Aparelho com a impressora: imprime sozinho a comanda de cada pedido novo.
+          if (readJson('eag-kitchen-autoprint', false)) result.orders.filter((o) => arrived.includes(o.id)).forEach(printComanda);
         }
       }
       known.current = ids;
@@ -103,6 +94,8 @@ export default function KitchenPage() {
 
   const { move, busyId } = useProductionMove(load);
   const toggleSound = () => { const value = !sound; setSound(value); writeJson('eag-kitchen-sound', value); if (value) beep(); };
+  const [autoPrint, setAutoPrint] = useState(() => readJson('eag-kitchen-autoprint', false));
+  const toggleAutoPrint = () => { const value = !autoPrint; setAutoPrint(value); writeJson('eag-kitchen-autoprint', value); };
 
   const teams = useMemo(() => [...new Set((data?.orders || []).map((o) => o.teamName))].sort(), [data]);
   const filtered = useMemo(() => {
@@ -133,7 +126,11 @@ export default function KitchenPage() {
   return <div className="admin-page kitchen-page">
     <header className="admin-page-head">
       <div><h1>Cozinha / Produção</h1><p>Pedidos da lanchonete, do mais antigo para o mais novo em cada etapa.</p></div>
-      <button type="button" className="btn btn-outline btn-sm" onClick={toggleSound} title="Aviso sonoro de novo pedido">{sound ? <Bell size={15} /> : <BellOff size={15} />} Som {sound ? 'ligado' : 'desligado'}</button>
+      <div className="head-actions">
+        <button type="button" className="btn btn-outline btn-sm" onClick={toggleAutoPrint} title="Imprime a comanda de cada pedido novo neste aparelho">
+          <Printer size={15} /> Imprimir novos: {autoPrint ? 'sim' : 'não'}</button>
+        <button type="button" className="btn btn-outline btn-sm" onClick={toggleSound} title="Aviso sonoro de novo pedido">{sound ? <Bell size={15} /> : <BellOff size={15} />} Som {sound ? 'ligado' : 'desligado'}</button>
+      </div>
     </header>
 
     <div className="filters-bar">
