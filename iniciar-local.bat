@@ -4,7 +4,7 @@ title Sistema EAG (modo local) - nao feche esta janela
 cd /d "%~dp0"
 
 if not exist "server\node_modules" (
-  echo Instalando dependencias pela primeira vez (precisa de internet)...
+  echo Instalando dependencias pela primeira vez - precisa de internet...
   call npm install
   pushd server
   call npm install
