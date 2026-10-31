@@ -27,9 +27,21 @@ async function cloudJson(path, token, init = {}) {
 }
 
 console.log(`Importando o cardápio de ${cloud}\n`);
-const email = process.env.CLOUD_EMAIL || await ask('E-mail do admin da nuvem: ');
-const password = process.env.CLOUD_PASSWORD || await ask('Senha: ', { hidden: true });
-const { token } = await cloudJson('/auth/login', null, { method: 'POST', body: JSON.stringify({ email, password }) });
+// Login no painel da nuvem (até 3 tentativas). A senha não aparece enquanto é digitada.
+let token = null;
+for (let attempt = 1; attempt <= 3 && !token; attempt++) {
+  const email = process.env.CLOUD_EMAIL || await ask('E-mail do admin da nuvem: ');
+  const password = process.env.CLOUD_PASSWORD || await ask('Senha (não aparece ao digitar): ', { hidden: true });
+  try {
+    ({ token } = await cloudJson('/auth/login', null, { method: 'POST', body: JSON.stringify({ email, password }) }));
+  } catch (error) {
+    const offline = error.name === 'TimeoutError' || error.cause?.code === 'ENOTFOUND' || /fetch failed/i.test(error.message);
+    console.error(offline ? `\nSem conexão com ${cloud}. A importação precisa de internet.` : `\nNão foi possível entrar: ${error.message.replace(/^\/auth\/login: /, '')}`);
+    if (offline || process.env.CLOUD_PASSWORD) process.exit(1);
+    if (attempt < 3) console.log('Use o mesmo e-mail e senha do painel do site na nuvem. Tente de novo.\n');
+  }
+}
+if (!token) process.exit(1);
 const [categories, products, teams, settings] = await Promise.all(
   ['/admin/categories', '/admin/products', '/admin/teams', '/admin/settings'].map((path) => cloudJson(path, token))
 );
