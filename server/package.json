@@ -9,7 +9,8 @@
     "test": "node --test test/",
     "local": "node scripts/local.js",
     "importar": "node scripts/importar-da-nuvem.js",
-    "lancar-nuvem": "node scripts/lancar-da-nuvem.js"
+    "lancar-nuvem": "node scripts/lancar-da-nuvem.js",
+    "local-teste": "node scripts/teste.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
