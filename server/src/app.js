@@ -67,7 +67,7 @@ app.use('/api/finance', financeRoutes);
 app.use('/api', (_req, res) => fail(res, 404, 'Rota não encontrada.'));
 
 if (serveClient) {
-  const dist = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../client/dist');
+  const dist = process.env.CLIENT_DIST || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../client/dist');
   // index.html sem cache (atualizações aparecem ao recarregar); os arquivos com hash no nome podem ficar em cache.
   app.use(express.static(dist, { index: false, setHeaders: (res, file) => { if (file.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache'); } }));
   app.get('*', (_req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(dist, 'index.html')); });

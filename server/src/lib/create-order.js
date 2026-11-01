@@ -45,6 +45,7 @@ export const publicOrderSchema = z.object({
 // Balcão: telefone opcional, exceto para fiado e delivery (validado em validateOrder).
 export const staffOrderSchema = z.object({
   ...baseFields,
+  orderNote: z.string().trim().max(300, 'Observação da comanda muito longa (máximo 300 caracteres).').default(''),
   buyerPhone: z.string().trim().max(30).default('').refine((value) => !value || validPhone(value), 'Telefone inválido: informe com DDD.')
 });
 
@@ -127,13 +128,13 @@ export async function insertOrder(db, input, settings, { paymentMethod, onCredit
   const { rows } = await db.query(`INSERT INTO orders(order_number,public_token,buyer_name,buyer_phone,team_id,team_name,mode,items,
       subtotal_cents,total_cents,delivery_fee_cents,expires_at,status,payment_status,production_status,service_type,payment_method,
       delivery_address,delivery_reference,delivery_note,table_number,cash_change_for_cents,ticket_number,client_request_id,
-      on_credit,credit_at,credit_by_name,source)
+      on_credit,credit_at,credit_by_name,source,order_note)
     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,CASE WHEN $12='pix' AND $22='site' THEN NOW()+($13 * INTERVAL '1 minute') END,'active','awaiting_payment','new',
-      $14,$12,$15,$16,$17,$18,$19,$20,$21,$23,CASE WHEN $23 THEN NOW() END,CASE WHEN $23 THEN $24 END,$22) RETURNING *`,
+      $14,$12,$15,$16,$17,$18,$19,$20,$21,$23,CASE WHEN $23 THEN NOW() END,CASE WHEN $23 THEN $24 END,$22,$25) RETURNING *`,
   [orderNumber, publicToken, input.buyerName, input.buyerPhone || '', input.teamId, teamName, input.mode, JSON.stringify(snapshot),
     subtotal, total, deliveryFeeCents, paymentMethod, deadline, input.serviceType,
     delivery ? input.deliveryAddress : '', delivery ? input.deliveryReference : '', delivery ? input.deliveryNote : '',
-    tableNumber, cashChangeFor, ticket.rows[0].next, input.clientRequestId || null, actor ? 'balcao' : 'site', onCredit, actor?.name || 'Comprador']);
+    tableNumber, cashChangeFor, ticket.rows[0].next, input.clientRequestId || null, actor ? 'balcao' : 'site', onCredit, actor?.name || 'Comprador', actor ? input.orderNote || '' : '']);
   let order = rows[0];
   await addHistory(db, { orderId: order.id, kind: 'order', status: 'created', note: actor ? 'Venda registrada no balcão' : 'Pedido criado pelo site', actor: actor || { name: 'Comprador' } });
   const adjusted = snapshot.filter((item) => item.priceAdjustedFromCents != null);

@@ -41,6 +41,7 @@ function KitchenCard({ order, now, role, requirePix, busy, onMove, onOpen, fresh
       </header>
       <div className="k-buyer"><b>{order.buyerName}</b><span>{order.teamName}</span></div>
       <div className="k-badges"><ServiceBadge order={order} /><PaymentBadge order={order} /></div>
+      {order.orderNote && <p className="k-note">Obs.: {order.orderNote}</p>}
       {order.serviceType === 'delivery' && <p className="k-address"><MapPin size={13} /> {order.deliveryAddress}{order.deliveryReference ? ` — ${order.deliveryReference}` : ''}</p>}
       {(() => {
         // Itens do balcão (salgado, café, bebida) aparecem discretos: a cozinha foca no que precisa preparar.

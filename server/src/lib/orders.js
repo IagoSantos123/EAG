@@ -212,6 +212,7 @@ export function serializeOrder(row) {
     deliveryAddress: row.delivery_address,
     deliveryReference: row.delivery_reference,
     deliveryNote: row.delivery_note,
+    orderNote: row.order_note || '',
     items: serializeItems(row.items),
     subtotal: toMoney(row.subtotal_cents),
     deliveryFee: toMoney(row.delivery_fee_cents),

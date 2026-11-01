@@ -30,11 +30,13 @@ function comandaHtml(order) {
     li:last-child { margin-bottom: 0; }
     .opt { font-size: 13px; padding-left: 3mm; }
     .note { font-size: 13px; font-weight: 700; padding-left: 3mm; }
+    .note.order { padding: 0 0 2mm; }
     .foot { font-size: 11px; margin-top: 2mm; display: flex; justify-content: space-between; }
   </style></head><body>
     <div class="ticket"><small>SENHA</small><b>#${escape(order.ticket)}</b></div>
     <div class="who">${escape(order.buyerName)}</div>
     <div class="meta">${escape(order.teamName)} · ${escape(service)}${table}</div>
+    ${order.orderNote ? `<div class="note order">OBS DA COMANDA: ${escape(order.orderNote)}</div>` : ''}
     <ul>${items}</ul>
     <div class="foot"><span>${escape(order.orderNumber)}</span><span>${escape(payment)} · ${clock(order.createdAt)}</span></div>
   </body></html>`;

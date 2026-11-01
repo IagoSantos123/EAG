@@ -293,6 +293,7 @@ const HISTORY_LABELS = {
   created: 'Pedido criado', claimed: 'Comprador informou o PIX', confirmed: 'Recebimento registrado', claim_rejected: 'PIX não localizado',
   voided: 'Lançamento anulado', refunded: 'Estorno', cancelled: 'Cancelado', expired: 'Expirado', reactivated: 'Reativado',
   new: 'Novo pedido', in_production: 'Em produção', ready: 'Pronto', awaiting_pickup: 'Aguardando retirada', finalized: 'Finalizado',
+  customer_updated: 'Dados do cliente alterados', note_updated: 'Observação da comanda', price_adjusted: 'Preço ajustado', linked: 'Comanda mista', credit: 'Fiado',
   // Estados do modelo anterior
   awaiting_payment: 'Aguardando pagamento', pending_review: 'Conferência de PIX', preparing: 'Em preparo', completed: 'Concluído'
 };
@@ -371,6 +372,7 @@ export function OrderDetail({ orderId, onClose, onChanged }) {
           <p>{SERVICE_TYPES[order.serviceType]}{order.tableNumber ? ` · Mesa ${order.tableNumber}` : ''}<br />
             {order.serviceType === 'delivery' && <>Endereço: <b>{order.deliveryAddress}</b>{order.deliveryReference && <><br />Ref.: {order.deliveryReference}</>}{order.deliveryNote && <><br />Obs.: {order.deliveryNote}</>}</>}
           </p>
+          {order.orderNote && <p className="order-note">Obs. da comanda: <b>{order.orderNote}</b></p>}
           <p className="muted small">Criado em {fullDateTime(order.createdAt)}</p>
         </section>
         <section>
@@ -444,7 +446,7 @@ export function formatPhone(value) {
 function CustomerDialog({ order, onClose, onSaved }) {
   const { call } = useAdmin();
   const teams = useTeams();
-  const [form, setForm] = useState({ buyerName: order.buyerName, buyerPhone: order.buyerPhone, teamId: '' });
+  const [form, setForm] = useState({ buyerName: order.buyerName, buyerPhone: order.buyerPhone, teamId: '', orderNote: order.orderNote || '' });
   const [error, setError] = useState('');
   useEffect(() => { const team = teams.find((t) => t.name === order.teamName); if (team) setForm((f) => ({ ...f, teamId: String(team.id) })); }, [teams, order.teamName]);
   const save = async (event) => {
@@ -452,13 +454,14 @@ function CustomerDialog({ order, onClose, onSaved }) {
     try { await call(`/admin/orders/${order.id}/customer`, { method: 'PATCH', body: form }); onSaved(); }
     catch (err) { setError(err.message); }
   };
-  return <Modal title="Dados do cliente" onClose={onClose} size="sm"
+  return <Modal title="Dados do cliente e observação" onClose={onClose} size="sm"
     footer={<><button type="button" className="btn btn-ghost" onClick={onClose}>Cancelar</button><button type="submit" form="customer-form" className="btn btn-primary">Salvar</button></>}>
     <form id="customer-form" onSubmit={save} className="stack">
       <label className="field"><span>Nome</span><input required minLength={2} value={form.buyerName} onChange={(e) => setForm({ ...form, buyerName: e.target.value })} /></label>
       <label className="field"><span>Telefone</span><input inputMode="tel" value={form.buyerPhone} onChange={(e) => setForm({ ...form, buyerPhone: formatPhone(e.target.value) })} placeholder="(83) 99999-0000" /></label>
       <label className="field"><span>Equipe</span><select value={form.teamId} onChange={(e) => setForm({ ...form, teamId: e.target.value })}>
         <option value="">Sem equipe / visitante</option>{teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}</select></label>
+      <label className="field"><span>Observação da comanda</span><input value={form.orderNote} maxLength={300} onChange={(e) => setForm({ ...form, orderNote: e.target.value })} placeholder="Ex.: anotado no papel em 31/10" /></label>
       {error && <p className="alert alert-error">{error}</p>}
     </form>
   </Modal>;

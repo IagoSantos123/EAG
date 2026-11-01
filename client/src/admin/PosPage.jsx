@@ -10,7 +10,7 @@ import ProductModal from '../shop/ProductModal.jsx';
 import { useAdmin, useLiveRefresh } from './context.js';
 import { OpenCashInline, PaymentLines, formatPhone, hasCashLine, hasCreditLine, linesError, linesPayload, newPaymentLines, useRegisterMethods, useTeams } from './shared.jsx';
 
-const emptyCustomer = { buyerName: '', buyerPhone: '', teamId: '', serviceType: 'dine_in', tableNumber: '', deliveryAddress: '', deliveryReference: '' };
+const emptyCustomer = { buyerName: '', buyerPhone: '', teamId: '', serviceType: 'dine_in', tableNumber: '', deliveryAddress: '', deliveryReference: '', orderNote: '' };
 
 export default function PosPage() {
   const { call, can } = useAdmin();
@@ -118,6 +118,7 @@ export default function PosPage() {
         serviceType: customer.serviceType, tableNumber: customer.serviceType === 'dine_in' ? customer.tableNumber : '',
         deliveryAddress: customer.serviceType === 'delivery' ? customer.deliveryAddress : '', deliveryReference: customer.serviceType === 'delivery' ? customer.deliveryReference : '',
         items: lines.map((l) => ({ productId: l.productId, mode: l.mode, priceOverride: l.priceOverride ?? null, quantity: l.quantity, selectedOptions: l.selectedOptions, note: l.note || '', customText: l.customText || '' })),
+        orderNote: customer.orderNote.trim(),
         payment
       } });
       setDone({ ...result, payType, hasSnack });
@@ -190,6 +191,7 @@ export default function PosPage() {
           <label className="field"><span>Endereço *</span><input value={customer.deliveryAddress} onChange={set('deliveryAddress')} maxLength={300} /></label>
           <label className="field"><span>Referência</span><input value={customer.deliveryReference} onChange={set('deliveryReference')} maxLength={200} /></label>
         </div>}
+        <label className="field"><span>Observação da comanda (opcional)</span><input value={customer.orderNote} onChange={set('orderNote')} maxLength={300} placeholder="Ex.: anotado no papel em 31/10" /></label>
 
         <div className="pos-totals">
           <div><span>Subtotal</span><b>{money(subtotal)}</b></div>

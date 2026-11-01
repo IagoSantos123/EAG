@@ -398,6 +398,13 @@ const MIGRATIONS = [
         'Refrigerante 250 ml', 'Suco (copo)', 'Água 500 ml', 'Água com gás', 'Pipoca Karintó', 'JUJUBA', 'PASTILHA', 'BALA IORGUTE', 'Tirinete'
       ]]);
     }
+  },
+  {
+    // Observação geral da comanda (ex.: "anotado no papel em 31/10"), além das observações de cada item.
+    id: '2026-11-008-observacao-da-comanda',
+    async run(client) {
+      await client.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS order_note TEXT NOT NULL DEFAULT ''");
+    }
   }
 ];
 

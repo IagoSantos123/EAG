@@ -202,10 +202,11 @@ router.patch('/orders/:id/customer', auth('orders.edit'), asyncRoute(async (req,
   const input = parse(z.object({
     buyerName: z.string().trim().min(2, 'Informe o nome.').max(120),
     buyerPhone: z.string().trim().max(30).refine((v) => !v || (v.replace(/\D/g, '').length >= 10 && v.replace(/\D/g, '').length <= 13), 'Telefone inválido: informe com DDD.'),
-    teamId: z.preprocess((v) => (v === '' || v == null ? null : Number(v)), z.number().int().positive().nullable())
+    teamId: z.preprocess((v) => (v === '' || v == null ? null : Number(v)), z.number().int().positive().nullable()),
+    orderNote: z.string().trim().max(300, 'Observação da comanda muito longa (máximo 300 caracteres).').optional()
   }), req.body);
   await withTransaction(pool, async (db) => {
-    const found = await db.query('SELECT buyer_name,buyer_phone,team_name,on_credit FROM orders WHERE id=$1 FOR UPDATE', [id]);
+    const found = await db.query('SELECT buyer_name,buyer_phone,team_name,on_credit,order_note FROM orders WHERE id=$1 FOR UPDATE', [id]);
     if (!found.rowCount) throw new HttpError(404, 'Pedido não encontrado.');
     if (found.rows[0].on_credit && input.buyerPhone.replace(/\D/g, '').length < 10) throw new HttpError(400, 'Pedido no fiado precisa manter um telefone válido.');
     let teamName = 'Sem equipe';
@@ -216,7 +217,13 @@ router.patch('/orders/:id/customer', auth('orders.edit'), asyncRoute(async (req,
     }
     await db.query('UPDATE orders SET buyer_name=$1, buyer_phone=$2, team_id=$3, team_name=$4, updated_at=NOW() WHERE id=$5', [input.buyerName, input.buyerPhone, input.teamId, teamName, id]);
     const old = found.rows[0];
-    await addHistory(db, { orderId: id, kind: 'order', status: 'customer_updated', note: `Cliente: ${old.buyer_name} / ${old.buyer_phone || 'sem telefone'} / ${old.team_name} → ${input.buyerName} / ${input.buyerPhone || 'sem telefone'} / ${teamName}`, actor: req.user });
+    if (old.buyer_name !== input.buyerName || old.buyer_phone !== input.buyerPhone || old.team_name !== teamName) {
+      await addHistory(db, { orderId: id, kind: 'order', status: 'customer_updated', note: `Cliente: ${old.buyer_name} / ${old.buyer_phone || 'sem telefone'} / ${old.team_name} → ${input.buyerName} / ${input.buyerPhone || 'sem telefone'} / ${teamName}`, actor: req.user });
+    }
+    if (input.orderNote !== undefined && input.orderNote !== old.order_note) {
+      await db.query('UPDATE orders SET order_note=$1 WHERE id=$2', [input.orderNote, id]);
+      await addHistory(db, { orderId: id, kind: 'order', status: 'note_updated', note: `Observação da comanda: ${input.orderNote || '(removida)'}`, actor: req.user });
+    }
   });
   publish('order', { orderId: id });
   res.json({ ok: true });
@@ -300,11 +307,11 @@ router.get('/report.csv', auth('finance.view'), asyncRoute(async (req, res) => {
   const paymentLabel = { awaiting_payment: 'Aguardando pagamento', pending_review: 'Em conferência', partial: 'Parcial', confirmed: 'Pago', refunded: 'Estornado' };
   const formatMoney = (cents) => (Number(cents) / 100).toFixed(2).replace('.', ',');
   const lines = [
-    ['Pedido', 'Senha', 'Data', 'Comprador', 'Telefone', 'Equipe', 'Catálogo', 'Atendimento', 'Forma de pagamento', 'Subtotal', 'Entrega', 'Total', 'Recebido', 'Situação do pagamento', 'Etapa', 'Situação'],
+    ['Pedido', 'Senha', 'Data', 'Comprador', 'Telefone', 'Equipe', 'Catálogo', 'Atendimento', 'Forma de pagamento', 'Subtotal', 'Entrega', 'Total', 'Recebido', 'Situação do pagamento', 'Etapa', 'Situação', 'Observação'],
     ...rows.map((r) => [r.order_number, r.ticket_number, new Date(r.created_at).toLocaleString('pt-BR', { timeZone: TIMEZONE }), r.buyer_name, r.buyer_phone, r.team_name,
       r.mode === 'snack' ? 'Lanchonete' : 'Artigos religiosos', SERVICE_LABELS[r.service_type], PAYMENT_METHOD_LABELS[r.payment_method],
       formatMoney(r.subtotal_cents), formatMoney(r.delivery_fee_cents), formatMoney(r.total_cents), formatMoney(r.paid_cents - r.refunded_cents),
-      paymentLabel[r.payment_status], PRODUCTION_LABELS[r.production_status], statusLabel[r.status]])
+      paymentLabel[r.payment_status], PRODUCTION_LABELS[r.production_status], statusLabel[r.status], r.order_note])
   ].map((row) => row.map(escape).join(';'));
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="pedidos-${period.from}-a-${period.to}.csv"`);
