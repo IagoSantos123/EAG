@@ -44,11 +44,28 @@ function Shop({ route }) {
   </div>;
 }
 
+// Durante o evento os pedidos são feitos presencialmente (o sistema roda no local, sem internet).
+// O site público mostra só este aviso; o painel (#/admin) continua disponível para consulta.
+function SiteFechado() {
+  return <main className="site-fechado">
+    <div className="site-fechado-card">
+      <div className="site-fechado-logos">
+        <img src="/brand/la-em-gracas-lanches.png" alt="Lá em Graças Lanches" />
+        <img src="/brand/eag-gracas.png" alt="EAG — Encontro de Adolescentes Graças" />
+      </div>
+      <h1>Pedidos só no balcão</h1>
+      <p>Durante o encontro, os pedidos da lanchonete e dos artigos religiosos são feitos <b>presencialmente</b>.</p>
+      <p>Vá até o balcão da <b>Lá em Graças Lanches</b>, faça seu pedido e acompanhe sua senha na TV do salão.</p>
+      <small>Pagamento no balcão: PIX, dinheiro ou cartão.</small>
+    </div>
+  </main>;
+}
+
 export default function App() {
   const route = useRoute();
   return <ToastProvider>
     <ConfirmProvider>
-      {route.name === 'admin' ? <AdminApp tab={route.params.tab} /> : <Shop route={route} />}
+      {route.name === 'admin' ? <AdminApp tab={route.params.tab} /> : <SiteFechado />}
     </ConfirmProvider>
   </ToastProvider>;
 }

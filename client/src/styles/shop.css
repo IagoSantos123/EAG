@@ -263,3 +263,12 @@
   .track-hero { flex-direction: column; align-items: flex-start; padding-top: 38px; }
   .product-modal-photo { height: 200px; margin: 0 -16px 14px; width: calc(100% + 32px); }
 }
+
+/* Aviso do site durante o evento: pedidos só presencialmente. */
+.site-fechado { min-height: 100vh; display: grid; place-items: center; padding: 24px 16px; background: var(--primary-50); }
+.site-fechado-card { max-width: 480px; width: 100%; background: var(--surface); border-radius: 16px; box-shadow: var(--shadow); padding: 32px 24px; text-align: center; display: grid; gap: 12px; }
+.site-fechado-logos { display: flex; justify-content: center; gap: 12px; margin-bottom: 4px; }
+.site-fechado-logos img { height: 72px; width: auto; border-radius: 12px; }
+.site-fechado h1 { font-size: 26px; color: var(--primary); }
+.site-fechado p { margin: 0; color: var(--ink-2); font-size: 16px; }
+.site-fechado small { color: var(--muted); font-size: 14px; }

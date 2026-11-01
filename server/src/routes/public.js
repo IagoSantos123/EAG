@@ -111,6 +111,10 @@ function orderResponse(row) {
     total: toMoney(row.total_cents), paymentMethod: row.payment_method };
 }
 
+// Durante o evento os pedidos são só presenciais (o site mostra o aviso). Esta rota vem antes da criação
+// de pedidos e recusa também quem ainda estiver com a página antiga aberta. Para reabrir, remova-a.
+router.post('/orders', (_req, res) => fail(res, 409, 'Os pedidos pelo site estão encerrados. Faça seu pedido presencialmente no balcão.', 'SITE_CLOSED'));
+
 router.post('/orders', orderLimiter, asyncRoute(async (req, res) => {
   const input = parse(publicOrderSchema, req.body, 'Confira os dados do pedido.');
   if (input.clientRequestId) {
