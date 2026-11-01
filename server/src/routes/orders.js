@@ -3,11 +3,11 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { pool, readSettings } from '../db.js';
 import { auth, can } from '../lib/auth.js';
-import { markCredit, registerPayments, paymentLinesSchema } from '../lib/payments.js';
+import { markCredit, registerPayments, paymentLinesSchema, splitPaymentLines } from '../lib/payments.js';
 import { staffOrderSchema, validateOrder, insertOrder } from '../lib/create-order.js';
 import { expireDueOrders } from '../lib/expiry.js';
 import { cancelPixCharges } from '../lib/mercadopago.js';
-import { asyncRoute, fail, parse, toCents, toId, toMoney, withTransaction, HttpError } from '../lib/http.js';
+import { asyncRoute, fail, parse, toId, toMoney, withTransaction, HttpError } from '../lib/http.js';
 import { readPeriod, periodSql, TIMEZONE } from '../lib/time.js';
 import {
   PRODUCTION_FLOW, PRODUCTION_LABELS, PRODUCTION_TIMESTAMP, SERVICE_TYPES, PAYMENT_METHODS, PAYMENT_METHOD_LABELS, SERVICE_LABELS,
@@ -289,32 +289,6 @@ router.post('/pos/orders', auth('pos.sell'), asyncRoute(async (req, res) => {
     linked: linked ? { id: linked.id, orderNumber: linked.order_number, total: toMoney(linked.total_cents) } : null });
 }));
 
-// Reparte as formas de pagamento da comanda entre os pedidos (na ordem), sem mudar o total de cada forma.
-// O troco do dinheiro fica com o último pedaço em dinheiro.
-function splitPaymentLines(lines, totals) {
-  const sum = lines.reduce((total, line) => total + toCents(line.amount), 0);
-  const expected = totals.reduce((total, value) => total + value, 0);
-  if (sum !== expected) throw new HttpError(400, `A soma das formas de pagamento (${toMoney(sum).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}) deve ser igual ao total (${toMoney(expected).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}).`);
-  if (totals.length === 1) return [lines];
-  const queue = lines.map((line) => ({ ...line, left: toCents(line.amount) }));
-  const split = totals.map((total) => {
-    const pieces = [];
-    let need = total;
-    for (const line of queue) {
-      if (!need) break;
-      const take = Math.min(line.left, need);
-      if (!take) continue;
-      line.left -= take; need -= take;
-      pieces.push({ method: line.method, amount: toMoney(take), tendered: null, source: line });
-    }
-    return pieces;
-  });
-  for (const line of queue.filter((item) => item.method === 'cash' && item.tendered != null)) {
-    const last = split.flat().filter((piece) => piece.source === line).at(-1);
-    if (last) last.tendered = toMoney(toCents(last.amount) + toCents(line.tendered) - toCents(line.amount));
-  }
-  return split.map((pieces) => pieces.map(({ source, ...piece }) => piece));
-}
 
 // ---------- Relatório CSV ----------
 

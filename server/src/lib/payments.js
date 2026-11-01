@@ -93,3 +93,31 @@ export async function markCredit(db, { orderId, actor, note = '' }) {
   await addHistory(db, { orderId, kind: 'payment', status: 'credit', note: `Lançado como fiado: ${money(balanceCents(order))}${note ? ` — ${note}` : ''}`, actor });
   return order;
 }
+
+// Reparte as formas de pagamento entre vários pedidos (na ordem), sem mudar o total de cada forma
+// (comanda mista no balcão, ou vários fiados pagos de uma vez).
+// O troco do dinheiro fica com o último pedaço em dinheiro.
+export function splitPaymentLines(lines, totals) {
+  const sum = lines.reduce((total, line) => total + toCents(line.amount), 0);
+  const expected = totals.reduce((total, value) => total + value, 0);
+  if (sum !== expected) throw new HttpError(400, `A soma das formas de pagamento (${toMoney(sum).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}) deve ser igual ao total (${toMoney(expected).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}).`);
+  if (totals.length === 1) return [lines];
+  const queue = lines.map((line) => ({ ...line, left: toCents(line.amount) }));
+  const split = totals.map((total) => {
+    const pieces = [];
+    let need = total;
+    for (const line of queue) {
+      if (!need) break;
+      const take = Math.min(line.left, need);
+      if (!take) continue;
+      line.left -= take; need -= take;
+      pieces.push({ method: line.method, amount: toMoney(take), tendered: null, source: line });
+    }
+    return pieces;
+  });
+  for (const line of queue.filter((item) => item.method === 'cash' && item.tendered != null)) {
+    const last = split.flat().filter((piece) => piece.source === line).at(-1);
+    if (last) last.tendered = toMoney(toCents(last.amount) + toCents(line.tendered) - toCents(line.amount));
+  }
+  return split.map((pieces) => pieces.map(({ source, ...piece }) => piece));
+}

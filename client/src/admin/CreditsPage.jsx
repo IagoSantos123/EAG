@@ -1,10 +1,11 @@
 // Fiados: valores anotados no nome do cliente para cobrança posterior, e histórico das baixas.
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { MessageCircle, Search } from 'lucide-react';
+import { HandCoins, MessageCircle, Search } from 'lucide-react';
 import { EmptyState, ErrorState, Spinner } from '../components/ui.jsx';
 import { dateTime, elapsed, money } from '../lib/api.js';
 import { useAdmin, useLiveRefresh } from './context.js';
 import { OrderDetail, PaymentDialog } from './shared.jsx';
+import SettleCredits from './SettleCredits.jsx';
 
 function whatsappLink(order) {
   let digits = order.buyerPhone.replace(/\D/g, '');
@@ -22,6 +23,7 @@ export default function CreditsPage() {
   const [grouped, setGrouped] = useState(false);
   const [paying, setPaying] = useState(null);
   const [openId, setOpenId] = useState(null);
+  const [settling, setSettling] = useState(null);
   const now = Date.now();
 
   const load = useCallback(async () => {
@@ -64,6 +66,7 @@ export default function CreditsPage() {
     <div className="filters-bar">
       <label className="search-field"><Search size={16} /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Nome, telefone, equipe ou pedido" /></label>
       {tab === 'open' && <label className="check-line"><input type="checkbox" checked={grouped} onChange={(e) => setGrouped(e.target.checked)} /> Agrupar por cliente</label>}
+      {tab === 'open' && can('payments.register') && <button type="button" className="btn btn-primary" onClick={() => setSettling(search.trim())}><HandCoins size={16} /> Receber fiado de uma pessoa</button>}
     </div>
 
     {error ? <ErrorState message={error} onRetry={load} /> : !data ? <Spinner /> : orders.length === 0
@@ -75,7 +78,8 @@ export default function CreditsPage() {
             <td><b>{c.name}</b></td><td>{c.phone}</td><td>{c.team}</td>
             <td>{c.orders.map((o) => <button type="button" key={o.id} className="link-btn chip-link" onClick={() => setOpenId(o.id)}>#{o.ticket} {money(o.balance)}</button>)}</td>
             <td><b>{money(c.total)}</b></td>
-            <td className="actions"><a className="btn btn-outline btn-sm" href={whatsappLink({ ...c.orders[0], balance: c.total })} target="_blank" rel="noreferrer"><MessageCircle size={15} /> Cobrar</a></td>
+            <td className="actions"><a className="btn btn-outline btn-sm" href={whatsappLink({ ...c.orders[0], balance: c.total })} target="_blank" rel="noreferrer"><MessageCircle size={15} /> Cobrar</a>
+              {can('payments.register') && <button type="button" className="btn btn-primary btn-sm" onClick={() => setSettling(c.name)}>Receber</button>}</td>
           </tr>)}</tbody></table></div>
         : <div className="table-wrap"><table className="table">
           <thead><tr><th>Pedido</th><th>Cliente</th><th>Equipe</th><th>{tab === 'open' ? 'Anotado em' : 'Baixa em'}</th><th>{tab === 'open' ? 'Em aberto' : 'Valor'}</th><th /></tr></thead>
@@ -92,6 +96,7 @@ export default function CreditsPage() {
           </tr>)}</tbody></table></div>}
 
     {paying && <PaymentDialog order={paying} onClose={() => setPaying(null)} onDone={load} />}
+    {settling !== null && data && <SettleCredits orders={tab === 'open' ? data.orders : []} initialName={settling} onClose={() => setSettling(null)} onDone={load} />}
     {openId && <OrderDetail orderId={openId} onClose={() => setOpenId(null)} onChanged={load} />}
   </div>;
 }

@@ -333,3 +333,16 @@ body.kitchen-tv .admin-main { padding: 0; }
 @media (max-width: 900px) {
   .kitchen-page.is-tv .kanban { grid-template-columns: repeat(4, min(80vw, 320px)); overflow-x: auto; }
 }
+
+/* Fiados: cobrança de uma pessoa (várias comandas de uma vez). */
+.settle-search { margin-bottom: 4px; }
+.settle-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; max-height: 46vh; overflow-y: auto; }
+.settle-list li { border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-2); }
+.settle-list li.on { background: #fff; border-color: var(--blue); box-shadow: var(--shadow-sm); }
+.settle-list label { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: start; padding: 10px 12px; cursor: pointer; }
+.settle-list input[type=checkbox] { width: 18px; height: 18px; margin-top: 2px; }
+.settle-main { display: grid; gap: 2px; min-width: 0; }
+.settle-main small { color: var(--muted); font-size: 12px; }
+.settle-items { color: var(--ink-2) !important; font-size: 13px !important; }
+.settle-maybe { font-style: normal; font-size: 11px; font-weight: 700; color: var(--amber); background: var(--amber-50); border-radius: 99px; padding: 1px 7px; margin-left: 6px; }
+.settle-value { white-space: nowrap; }
