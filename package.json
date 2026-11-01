@@ -8,7 +8,8 @@
     "start": "npm run start --prefix server",
     "test": "npm test --prefix server",
     "local": "npm run build --prefix client && npm run local --prefix server",
-    "importar": "npm run importar --prefix server"
+    "importar": "npm run importar --prefix server",
+    "lancar-nuvem": "npm run lancar-nuvem --prefix server"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

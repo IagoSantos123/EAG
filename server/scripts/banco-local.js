@@ -8,7 +8,8 @@ import pg from 'pg';
 import EmbeddedPostgres from 'embedded-postgres';
 
 export const serverDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const dataDir = path.resolve(serverDir, '../.dados-local');
+// LOCAL_DATA_DIR permite apontar para uma cópia (ex.: testar um lançamento sem tocar no banco do evento).
+const dataDir = path.resolve(process.env.LOCAL_DATA_DIR || path.resolve(serverDir, '../.dados-local'));
 const dbDir = path.join(dataDir, 'postgres');
 
 // Configuração do modo local: server/.env.local (veja server/.env.local.example).
@@ -37,6 +38,19 @@ export function localDatabaseUrl() {
 async function alreadyRunning() {
   const client = new pg.Client({ connectionString: localDatabaseUrl().replace(/\/eag$/, '/postgres'), connectionTimeoutMillis: 2000 });
   try { await client.connect(); await client.end(); return true; } catch { return false; }
+}
+
+// Conecta ao banco local: usa o sistema se estiver aberto; se não, liga o Postgres só durante o script.
+export async function connectLocalDatabase() {
+  const url = localDatabaseUrl();
+  let stop = null;
+  let db = new pg.Client({ connectionString: url });
+  try { await db.connect(); } catch {
+    stop = await startLocalDatabase();
+    db = new pg.Client({ connectionString: url });
+    await db.connect();
+  }
+  return { db, close: async () => { await db.end().catch(() => {}); await stop?.(); } };
 }
 
 // Inicia o Postgres (criando o cluster e o banco "eag" na primeira vez). Devolve uma função para parar.
