@@ -14,6 +14,10 @@ function whatsappLink(order) {
   return `https://wa.me/${digits}?text=${encodeURIComponent(text)}`;
 }
 
+// Agrupa pelo nome (sem acento, maiúsculas ou espaços extras), não pelo telefone: muitos fiados foram
+// lançados com o telefone de enchimento (00) 00000-0000 e iam todos para a mesma pessoa.
+const customerKey = (order) => order.buyerName.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+
 export default function CreditsPage() {
   const { call, can } = useAdmin();
   const [tab, setTab] = useState('open');
@@ -41,9 +45,11 @@ export default function CreditsPage() {
   const customers = useMemo(() => {
     const map = new Map();
     for (const o of orders) {
-      const key = o.buyerPhone.replace(/\D/g, '') || o.buyerName.toLowerCase();
+      const key = customerKey(o);
       const entry = map.get(key) || { key, name: o.buyerName, phone: o.buyerPhone, team: o.teamName, total: 0, orders: [] };
       entry.total += o.balance; entry.orders.push(o);
+      // Fica com um telefone de verdade, se alguma comanda da pessoa tiver.
+      if (/^0*$/.test(entry.phone.replace(/\D/g, '')) && !/^0*$/.test(o.buyerPhone.replace(/\D/g, ''))) entry.phone = o.buyerPhone;
       map.set(key, entry);
     }
     return [...map.values()].sort((a, b) => b.total - a.total);
@@ -52,7 +58,7 @@ export default function CreditsPage() {
     const map = new Map();
     for (const o of orders) {
       const entry = map.get(o.teamName) || { name: o.teamName, people: new Set(), count: 0, total: 0 };
-      entry.people.add(o.buyerName.trim().toLowerCase()); entry.count += 1; entry.total += o.balance;
+      entry.people.add(customerKey(o)); entry.count += 1; entry.total += o.balance;
       map.set(o.teamName, entry);
     }
     return [...map.values()].sort((a, b) => b.total - a.total);
@@ -70,7 +76,7 @@ export default function CreditsPage() {
     {tab === 'open' && data?.summary && <div className="kpi-row">
       <div className="kpi kpi-warning"><span>Total a receber</span><b>{money(data.summary.total)}</b></div>
       <div className="kpi"><span>Pedidos no fiado</span><b>{data.summary.count}</b></div>
-      <div className="kpi"><span>Clientes</span><b>{data.summary.customers}</b></div>
+      <div className="kpi"><span>Clientes</span><b>{new Set(data.orders.map(customerKey)).size}</b></div>
     </div>}
 
     <div className="filters-bar">
@@ -100,7 +106,7 @@ export default function CreditsPage() {
             <td><b>{c.name}</b></td><td>{c.phone}</td><td>{c.team}</td>
             <td>{c.orders.map((o) => <button type="button" key={o.id} className="link-btn chip-link" onClick={() => setOpenId(o.id)}>#{o.ticket} {money(o.balance)}</button>)}</td>
             <td><b>{money(c.total)}</b></td>
-            <td className="actions"><a className="btn btn-outline btn-sm" href={whatsappLink({ ...c.orders[0], balance: c.total })} target="_blank" rel="noreferrer"><MessageCircle size={15} /> Cobrar</a>
+            <td className="actions"><a className="btn btn-outline btn-sm" href={whatsappLink({ ...c.orders[0], buyerPhone: c.phone, balance: c.total })} target="_blank" rel="noreferrer"><MessageCircle size={15} /> Cobrar</a>
               {can('payments.register') && <button type="button" className="btn btn-primary btn-sm" onClick={() => setSettling(c.name)}>Receber</button>}</td>
           </tr>)}</tbody></table></div>
         : <div className="table-wrap"><table className="table">

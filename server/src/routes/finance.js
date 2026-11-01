@@ -210,7 +210,8 @@ router.get('/credits', auth('credits.view'), asyncRoute(async (req, res) => {
   const open = settled ? null : {
     count: orders.length,
     total: orders.reduce((sum, o) => sum + o.balance, 0),
-    customers: new Set(orders.map((o) => o.buyerPhone.replace(/\D/g, '') || o.buyerName.toLowerCase())).size
+    // Pelo nome: vários fiados têm o telefone de enchimento (00) 00000-0000.
+    customers: new Set(orders.map((o) => o.buyerName.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim())).size
   };
   res.json({ orders, summary: open });
 }));
