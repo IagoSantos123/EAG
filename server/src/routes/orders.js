@@ -7,7 +7,7 @@ import { markCredit, registerPayments, paymentLinesSchema } from '../lib/payment
 import { staffOrderSchema, validateOrder, insertOrder } from '../lib/create-order.js';
 import { expireDueOrders } from '../lib/expiry.js';
 import { cancelPixCharges } from '../lib/mercadopago.js';
-import { asyncRoute, fail, parse, toId, toMoney, withTransaction, HttpError } from '../lib/http.js';
+import { asyncRoute, fail, parse, toCents, toId, toMoney, withTransaction, HttpError } from '../lib/http.js';
 import { readPeriod, periodSql, TIMEZONE } from '../lib/time.js';
 import {
   PRODUCTION_FLOW, PRODUCTION_LABELS, PRODUCTION_TIMESTAMP, SERVICE_TYPES, PAYMENT_METHODS, PAYMENT_METHOD_LABELS, SERVICE_LABELS,
@@ -239,27 +239,78 @@ router.post('/pos/orders', auth('pos.sell'), asyncRoute(async (req, res) => {
     if (input.buyerPhone.replace(/\D/g, '').length < 10) throw new HttpError(400, 'Para vender no fiado, informe o telefone do cliente.');
   }
   const settings = await readSettings();
-  const { deliveryFeeCents, tableNumber } = validateOrder(input, settings, { staff: true });
   const payment = input.payment;
   const hasCreditLine = payment.type === 'pay' && payment.lines.some((line) => line.method === 'fiado');
   if (hasCreditLine && input.buyerPhone.replace(/\D/g, '').length < 10) throw new HttpError(400, 'Para deixar parte no fiado, informe o telefone do cliente.');
   const method = payment.type === 'pay' ? (payment.lines.find((line) => line.method !== 'fiado') || payment.lines[0]).method
     : payment.type === 'credit' ? 'fiado' : payment.method;
+  // Comanda mista: lanchonete e artigos viram dois pedidos com a mesma senha (a lanchonete vai para a cozinha;
+  // os artigos ficam no catálogo deles, para o financeiro não misturar). A taxa de entrega fica com o primeiro.
+  const parts = ['snack', 'religious'].map((mode) => ({ mode, items: input.items.filter((item) => (item.mode || input.mode) === mode) }))
+    .filter((part) => part.items.length);
   const result = await withTransaction(pool, async (db) => {
-    const order = await insertOrder(db, input, settings, { paymentMethod: method, onCredit: payment.type === 'credit', actor: req.user, deliveryFeeCents, tableNumber });
+    const orders = [];
+    for (const [index, part] of parts.entries()) {
+      const partInput = { ...input, mode: part.mode, items: part.items,
+        serviceType: part.mode === 'religious' && input.serviceType === 'dine_in' ? 'pickup' : input.serviceType };
+      const { deliveryFeeCents, tableNumber } = validateOrder(partInput, settings, { staff: true });
+      orders.push(await insertOrder(db, { ...partInput, clientRequestId: index ? null : input.clientRequestId }, settings, {
+        paymentMethod: method, onCredit: payment.type === 'credit', actor: req.user, deliveryFeeCents: index ? 0 : deliveryFeeCents, tableNumber,
+        ticket: index ? orders[0].ticket_number : undefined }));
+    }
+    if (orders.length > 1) {
+      for (const [order, other] of [[orders[0], orders[1]], [orders[1], orders[0]]]) {
+        await addHistory(db, { orderId: order.id, kind: 'order', status: 'linked', note: `Mesma comanda do pedido ${other.order_number} (${other.mode === 'snack' ? 'lanchonete' : 'artigos religiosos'})`, actor: req.user });
+      }
+    }
     let change = 0;
     if (payment.type === 'pay') {
       // Valida o caixa e a soma antes de confirmar a venda: se algo falhar, nada é gravado.
-      const paid = await registerPayments(db, { orderId: order.id, lines: payment.lines, idempotencyKey: payment.idempotencyKey, actor: req.user, settings, note: 'Venda no balcão' });
-      change = paid.change || 0;
+      const split = splitPaymentLines(payment.lines, orders.map((order) => order.total_cents));
+      for (const [index, order] of orders.entries()) {
+        const paid = await registerPayments(db, { orderId: order.id, lines: split[index], idempotencyKey: index ? `${payment.idempotencyKey}-${index}` : payment.idempotencyKey,
+          actor: req.user, settings, note: 'Venda no balcão' });
+        change += paid.change || 0;
+      }
     }
-    return { order, change };
+    return { orders, change };
   });
-  publish('order', { orderId: result.order.id, created: true, mode: result.order.mode });
-  if (payment.type === 'pay') publish('payment', { orderId: result.order.id });
-  res.status(201).json({ id: result.order.id, ticket: result.order.ticket_number, orderNumber: result.order.order_number, token: result.order.public_token,
-    total: toMoney(result.order.total_cents), change: toMoney(result.change) });
+  const [main, linked] = result.orders;
+  for (const order of result.orders) {
+    publish('order', { orderId: order.id, created: true, mode: order.mode });
+    if (payment.type === 'pay') publish('payment', { orderId: order.id });
+  }
+  res.status(201).json({ id: main.id, ticket: main.ticket_number, orderNumber: main.order_number, token: main.public_token,
+    total: toMoney(result.orders.reduce((sum, order) => sum + order.total_cents, 0)), change: toMoney(result.change),
+    linked: linked ? { id: linked.id, orderNumber: linked.order_number, total: toMoney(linked.total_cents) } : null });
 }));
+
+// Reparte as formas de pagamento da comanda entre os pedidos (na ordem), sem mudar o total de cada forma.
+// O troco do dinheiro fica com o último pedaço em dinheiro.
+function splitPaymentLines(lines, totals) {
+  const sum = lines.reduce((total, line) => total + toCents(line.amount), 0);
+  const expected = totals.reduce((total, value) => total + value, 0);
+  if (sum !== expected) throw new HttpError(400, `A soma das formas de pagamento (${toMoney(sum).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}) deve ser igual ao total (${toMoney(expected).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}).`);
+  if (totals.length === 1) return [lines];
+  const queue = lines.map((line) => ({ ...line, left: toCents(line.amount) }));
+  const split = totals.map((total) => {
+    const pieces = [];
+    let need = total;
+    for (const line of queue) {
+      if (!need) break;
+      const take = Math.min(line.left, need);
+      if (!take) continue;
+      line.left -= take; need -= take;
+      pieces.push({ method: line.method, amount: toMoney(take), tendered: null, source: line });
+    }
+    return pieces;
+  });
+  for (const line of queue.filter((item) => item.method === 'cash' && item.tendered != null)) {
+    const last = split.flat().filter((piece) => piece.source === line).at(-1);
+    if (last) last.tendered = toMoney(toCents(last.amount) + toCents(line.tendered) - toCents(line.amount));
+  }
+  return split.map((pieces) => pieces.map(({ source, ...piece }) => piece));
+}
 
 // ---------- Relatório CSV ----------
 

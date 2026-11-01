@@ -23,6 +23,8 @@ const baseFields = {
   cashChangeFor: z.number().min(0).max(10000).nullable().default(null),
   items: z.array(z.object({
     productId: z.coerce.number().int().positive(),
+    // Catálogo do item (balcão): uma comanda pode ter lanchonete e artigos juntos.
+    mode: z.enum(['religious', 'snack']).optional(),
     quantity: z.number().int().min(1).max(30, 'Quantidade máxima por item: 30.'),
     selectedOptions: z.array(z.object({ group: z.string().max(80), option: z.string().max(80) })).max(40).default([]),
     note: z.string().max(300, 'Observação muito longa (máximo 300 caracteres).').default(''),
@@ -80,7 +82,7 @@ export function validateOrder(input, settings, { staff = false } = {}) {
 }
 
 // Insere o pedido (preço sempre recalculado pelo cadastro). Deve rodar dentro de transação.
-export async function insertOrder(db, input, settings, { paymentMethod, onCredit = false, actor, deliveryFeeCents, tableNumber }) {
+export async function insertOrder(db, input, settings, { paymentMethod, onCredit = false, actor, deliveryFeeCents, tableNumber, ticket: fixedTicket }) {
   let teamName = 'Sem equipe';
   if (input.teamId) {
     const team = await db.query('SELECT name FROM teams WHERE id=$1 AND active=TRUE', [input.teamId]);
@@ -108,7 +110,8 @@ export async function insertOrder(db, input, settings, { paymentMethod, onCredit
   }
   // Senha curta do dia, sequencial, para chamar o cliente no balcão.
   await db.query('SELECT pg_advisory_xact_lock(727002)');
-  const ticket = await db.query(`SELECT COALESCE(MAX(ticket_number),0)+1 AS next FROM orders
+  // Comanda mista: a parte dos artigos usa a mesma senha da parte da lanchonete.
+  const ticket = fixedTicket ? { rows: [{ next: fixedTicket }] } : await db.query(`SELECT COALESCE(MAX(ticket_number),0)+1 AS next FROM orders
     WHERE (created_at AT TIME ZONE $1)::date = (NOW() AT TIME ZONE $1)::date`, [TIMEZONE]);
   const orderNumber = `AG-${localDate().slice(2).replaceAll('-', '')}-${randomBytes(3).toString('hex').toUpperCase()}`;
   const publicToken = randomBytes(24).toString('base64url');

@@ -283,3 +283,10 @@
 .pix-counter small { color: var(--green); font-weight: 600; }
 .qr-setting { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
 .qr-setting img { width: 96px; height: 96px; object-fit: contain; border: 1px solid var(--line); border-radius: var(--radius-sm); background: #fff; }
+
+/* Balcão: observação por item, etiqueta de artigos na comanda mista e forma de pagamento ainda não escolhida. */
+.pos-line-main { gap: 3px; }
+.pos-note { border: 1px dashed var(--line-strong); border-radius: 6px; padding: 3px 7px; font-size: 12px; background: transparent; width: 100%; }
+.pos-note:focus { border-style: solid; border-color: var(--blue); outline: none; background: #fff; }
+.pos-tag { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 999px; background: var(--purple-50); color: var(--purple); font-size: 11px; font-weight: 700; vertical-align: 1px; }
+select.needs-choice { border-color: var(--amber); color: var(--muted); }

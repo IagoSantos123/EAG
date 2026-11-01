@@ -27,7 +27,7 @@ export default function PosPage() {
   const [customer, setCustomer] = useState(emptyCustomer);
   const [payType, setPayType] = useState('pay');
   const [payLines, setPayLines] = useState([]);
-  const [laterMethod, setLaterMethod] = useState('cash');
+  const [laterMethod, setLaterMethod] = useState('');
   const [cashOpen, setCashOpen] = useState(true);
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState('');
@@ -41,7 +41,8 @@ export default function PosPage() {
       setCatalog(data); setConfig(cfg); setError('');
     } catch (err) { setError(err.message); }
   }, [mode]);
-  useEffect(() => { setCatalog(null); setCategory('all'); setLines([]); load(); }, [load]);
+  // Trocar de catálogo só muda a vitrine: a comanda pode ter lanchonete e artigos juntos.
+  useEffect(() => { setCatalog(null); setCategory('all'); load(); }, [load]);
   const checkCash = useCallback(() => call('/admin/cash-status').then((r) => setCashOpen(r.open)).catch(() => {}), [call]);
   useEffect(() => { checkCash(); }, [checkCash]);
   useLiveRefresh(checkCash, ['cash']);
@@ -51,10 +52,10 @@ export default function PosPage() {
   const totalCents = Math.round((subtotal + deliveryFee) * 100);
   // Mantém o valor da forma de pagamento acompanhando o total enquanto há uma só forma.
   useEffect(() => {
-    setPayLines((current) => (current.length <= 1 ? newPaymentLines(totalCents, current[0]?.method || 'cash') : current));
+    setPayLines((current) => (current.length <= 1 ? newPaymentLines(totalCents, current[0]?.method || '') : current));
   }, [totalCents]);
 
-  useEffect(() => { setPayLines((current) => current.map((line) => (methods.includes(line.method) ? line : { ...line, method: 'pix' }))); }, [methods]);
+  useEffect(() => { setPayLines((current) => current.map((line) => (!line.method || methods.includes(line.method) ? line : { ...line, method: '' }))); }, [methods]);
 
   const products = useMemo(() => (catalog?.products || []).filter((p) => (category === 'all' || String(p.categoryId) === String(category))
     && (!search || p.name.toLowerCase().includes(search.toLowerCase()))), [catalog, category, search]);
@@ -62,20 +63,25 @@ export default function PosPage() {
   const addLine = (line) => setLines((current) => {
     const same = current.find((l) => l.productId === line.productId && l.note === line.note && l.customText === line.customText && JSON.stringify(l.selectedOptions) === JSON.stringify(line.selectedOptions));
     if (same) return current.map((l) => (l === same ? { ...l, quantity: Math.min(30, l.quantity + line.quantity) } : l));
-    return [...current, { ...line, key: uuid() }];
+    return [...current, { ...line, mode: line.mode || mode, key: uuid() }];
   });
   const quickAdd = (product) => {
     if (product.optionGroups.length || product.customTextLabel) { setConfiguring(product); return; }
-    addLine({ productId: product.id, name: product.name, unitPrice: product.price, quantity: 1, selectedOptions: [], optionLabels: [], note: '', customText: '' });
+    addLine({ productId: product.id, mode, name: product.name, unitPrice: product.price, quantity: 1, selectedOptions: [], optionLabels: [], note: '', customText: '' });
   };
+  const setNote = (key, note) => setLines((current) => current.map((l) => (l.key === key ? { ...l, note: note.slice(0, 300) } : l)));
   const setQty = (key, quantity) => setLines((current) => (quantity <= 0 ? current.filter((l) => l.key !== key) : current.map((l) => (l.key === key ? { ...l, quantity: Math.min(30, quantity) } : l))));
   const set = (key) => (event) => setCustomer((c) => ({ ...c, [key]: key === 'buyerPhone' ? formatPhone(event.target.value) : event.target.value }));
 
   const reset = () => {
-    setLines([]); setCustomer(emptyCustomer); setPayType('pay'); setPayLines(newPaymentLines(0, 'cash')); setFormError('');
+    setLines([]); setCustomer(emptyCustomer); setPayType('pay'); setPayLines(newPaymentLines(0)); setLaterMethod(''); setFormError('');
     requestId.current = uuid(); payKey.current = uuid();
   };
 
+  const hasSnack = lines.some((l) => l.mode === 'snack');
+  const mixed = hasSnack && lines.some((l) => l.mode === 'religious');
+  // Sem lanchonete na comanda não existe consumo no salão.
+  useEffect(() => { if (lines.length && !hasSnack) setCustomer((c) => (c.serviceType === 'dine_in' ? { ...c, serviceType: 'pickup' } : c)); }, [lines.length, hasSnack]);
   const phoneOk = customer.buyerPhone.replace(/\D/g, '').length >= 10;
   const validation = (() => {
     if (!lines.length) return 'Adicione itens à venda.';
@@ -83,6 +89,7 @@ export default function PosPage() {
     if (customer.buyerPhone && !phoneOk) return 'Telefone incompleto: informe com DDD.';
     if (customer.serviceType === 'delivery' && (customer.deliveryAddress.trim().length < 5 || !phoneOk)) return 'Delivery: informe endereço e telefone.';
     if (payType === 'credit' && !phoneOk) return 'Fiado: informe o telefone do cliente para a cobrança.';
+    if (payType === 'later' && !laterMethod) return 'Escolha como o cliente vai pagar depois.';
     if (payType === 'pay') {
       if (hasCreditLine(payLines) && !phoneOk) return 'Para deixar parte no fiado, informe o telefone do cliente.';
       if (hasCashLine(payLines) && !cashOpen) return 'O caixa está fechado: abra o caixa ou use "Fiado" / "Pagar depois".';
@@ -98,13 +105,13 @@ export default function PosPage() {
       const payment = payType === 'pay' ? { type: 'pay', idempotencyKey: payKey.current, lines: linesPayload(payLines) }
         : payType === 'credit' ? { type: 'credit' } : { type: 'later', method: laterMethod };
       const result = await call('/admin/pos/orders', { method: 'POST', body: {
-        clientRequestId: requestId.current, mode, buyerName: customer.buyerName.trim(), buyerPhone: customer.buyerPhone.trim(), teamId: customer.teamId || null,
+        clientRequestId: requestId.current, mode: hasSnack ? 'snack' : 'religious', buyerName: customer.buyerName.trim(), buyerPhone: customer.buyerPhone.trim(), teamId: customer.teamId || null,
         serviceType: customer.serviceType, tableNumber: customer.serviceType === 'dine_in' ? customer.tableNumber : '',
         deliveryAddress: customer.serviceType === 'delivery' ? customer.deliveryAddress : '', deliveryReference: customer.serviceType === 'delivery' ? customer.deliveryReference : '',
-        items: lines.map((l) => ({ productId: l.productId, quantity: l.quantity, selectedOptions: l.selectedOptions, note: l.note || '', customText: l.customText || '' })),
+        items: lines.map((l) => ({ productId: l.productId, mode: l.mode, quantity: l.quantity, selectedOptions: l.selectedOptions, note: l.note || '', customText: l.customText || '' })),
         payment
       } });
-      setDone({ ...result, payType });
+      setDone({ ...result, payType, hasSnack });
       reset();
     } catch (err) {
       setFormError(err.code === 'NETWORK' ? 'A conexão falhou. Toque em "Concluir venda" de novo: a venda não será duplicada.' : err.message);
@@ -113,7 +120,8 @@ export default function PosPage() {
   };
 
   if (error) return <div className="admin-page"><ErrorState message={error} onRetry={load} /></div>;
-  const services = mode === 'religious' ? ['pickup', 'delivery'] : ['dine_in', 'pickup', 'delivery'];
+  // Consumo no salão só existe para a lanchonete; com artigos junto, a parte dos artigos sai como retirada.
+  const services = hasSnack || (!lines.length && mode === 'snack') ? ['dine_in', 'pickup', 'delivery'] : ['pickup', 'delivery'];
 
   return <div className="admin-page pos-page">
     <header className="admin-page-head">
@@ -142,7 +150,9 @@ export default function PosPage() {
         <h2>Pedido</h2>
         {lines.length === 0 ? <p className="muted">Toque nos produtos para adicionar.</p> : <ul className="pos-lines">
           {lines.map((l) => <li key={l.key}>
-            <div><b>{l.name}</b>{l.optionLabels.length > 0 && <small>{l.optionLabels.join(', ')}</small>}{l.note && <small>Obs.: {l.note}</small>}</div>
+            <div className="pos-line-main"><b>{l.name}{mixed && l.mode === 'religious' && <span className="pos-tag">Artigos</span>}</b>
+              {l.optionLabels.length > 0 && <small>{l.optionLabels.join(', ')}</small>}
+              <input className="pos-note" value={l.note || ''} onChange={(e) => setNote(l.key, e.target.value)} placeholder="Observação (opcional)" aria-label={`Observação de ${l.name}`} /></div>
             <div className="qty qty-sm">
               <button type="button" onClick={() => setQty(l.key, l.quantity - 1)} aria-label="Diminuir">{l.quantity === 1 ? <Trash2 size={13} /> : <Minus size={14} />}</button>
               <span>{l.quantity}</span>
@@ -199,22 +209,23 @@ export default function PosPage() {
         </>}
         {payType === 'credit' && <p className="alert alert-info">O valor fica anotado no nome do cliente na aba <b>Fiados</b>. Na baixa, você escolhe as formas de pagamento.</p>}
         {payType === 'later' && <label className="field"><span>Como pretende pagar</span>
-          <select value={laterMethod} onChange={(e) => setLaterMethod(e.target.value)}>{methods.map((m) => <option key={m} value={m}>{PAYMENT_METHODS[m]}</option>)}</select></label>}
+          <select value={laterMethod} onChange={(e) => setLaterMethod(e.target.value)} className={laterMethod ? '' : 'needs-choice'}><option value="" disabled>Escolha a forma</option>{methods.filter((m) => m !== 'fiado').map((m) => <option key={m} value={m}>{PAYMENT_METHODS[m]}</option>)}</select></label>}
 
         {formError && <p className="alert alert-error">{formError}</p>}
         <button type="button" className="btn btn-primary btn-block btn-lg" disabled={busy || !lines.length} onClick={submit}>{busy ? 'Registrando...' : `Concluir venda · ${money(totalCents / 100)}`}</button>
       </section>
     </div>
 
-    {configuring && <ProductModal product={configuring} onClose={() => setConfiguring(null)} onAdd={(line) => { addLine(line); setConfiguring(null); }} />}
+    {configuring && <ProductModal product={configuring} onClose={() => setConfiguring(null)} onAdd={(line) => { addLine({ ...line, mode }); setConfiguring(null); }} />}
     {done && <Modal title="Venda registrada" onClose={() => setDone(null)} size="sm" footer={<>
-      {mode === 'snack' && <button type="button" className="btn btn-outline" onClick={() => call(`/admin/orders/${done.id}`).then(printComanda).catch(() => {})}>
+      {done.hasSnack && <button type="button" className="btn btn-outline" onClick={() => call(`/admin/orders/${done.id}`).then(printComanda).catch(() => {})}>
         <Printer size={16} /> Imprimir comanda</button>}
       <button type="button" className="btn btn-primary" onClick={() => setDone(null)}>Nova venda</button></>}>
       <div className="pos-done">
         <CheckCircle2 size={40} />
         <span>Senha</span><b>#{done.ticket}</b>
         <p>{done.orderNumber} · {money(done.total)}</p>
+        {done.linked && <p className="muted small">Artigos religiosos no pedido {done.linked.orderNumber} ({money(done.linked.total)}), com a mesma senha.</p>}
         {done.payType === 'pay' && done.change > 0 && <p className="change-big">Troco: <b>{money(done.change)}</b></p>}
         {done.payType === 'credit' && <p className="muted">Lançado no fiado.</p>}
         {done.payType === 'later' && <p className="muted">Pagamento pendente: receba depois em Pedidos ou Financeiro.</p>}

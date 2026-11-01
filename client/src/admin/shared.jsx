@@ -158,11 +158,13 @@ export function OpenCashInline({ onOpened }) {
   </div>;
 }
 
-export const newPaymentLines = (totalCents, method = 'pix') => [{ method, amount: centsText(totalCents), tendered: '' }];
+// Sem forma marcada por padrão: quem atende escolhe na hora (evita registrar cartão/PIX como dinheiro).
+export const newPaymentLines = (totalCents, method = '') => [{ method, amount: centsText(totalCents), tendered: '' }];
 
 export function linesError(lines, totalCents) {
   let sum = 0;
   for (const line of lines) {
+    if (!line.method) return 'Escolha a forma de pagamento.';
     const value = toCents(line.amount);
     if (Number.isNaN(value) || value <= 0) return 'Informe valores maiores que zero.';
     if (line.method === 'cash' && line.tendered) {
@@ -189,7 +191,8 @@ export function PaymentLines({ lines, setLines, methods, totalCents }) {
     {lines.map((line, index) => {
       const change = line.method === 'cash' && line.tendered ? toCents(line.tendered) - toCents(line.amount) : null;
       return <div key={index} className="pay-line">
-        <select value={line.method} onChange={(e) => update(index, { method: e.target.value })} aria-label="Forma de pagamento">
+        <select value={line.method} onChange={(e) => update(index, { method: e.target.value })} aria-label="Forma de pagamento" className={line.method ? '' : 'needs-choice'}>
+          <option value="" disabled>Escolha a forma</option>
           {methods.map((method) => <option key={method} value={method}>{PAYMENT_METHODS[method]}</option>)}
         </select>
         <MoneyInput value={line.amount} onChange={(value) => update(index, { amount: value })} aria-label="Valor" />
@@ -200,7 +203,7 @@ export function PaymentLines({ lines, setLines, methods, totalCents }) {
     })}
     <div className="pay-editor-foot">
       {lines.length < 4 && <button type="button" className="btn btn-ghost btn-sm" onClick={() => setLines((current) => [...current, {
-        method: methods.find((m) => !current.some((line) => line.method === m)) || 'pix', amount: remaining > 0 ? centsText(remaining) : '', tendered: '' }])}>
+        method: '', amount: remaining > 0 ? centsText(remaining) : '', tendered: '' }])}>
         <Plus size={15} /> Adicionar outra forma</button>}
       <span className={`pay-check ${remaining === 0 ? 'ok' : 'bad'}`}>{remaining === 0 ? `Soma confere: ${money(sum / 100)}` : `${remaining > 0 ? 'Faltam' : 'Excedeu'} ${money(Math.abs(remaining) / 100)}`}</span>
     </div>
@@ -212,7 +215,7 @@ export function PaymentDialog({ order, onClose, onDone }) {
   const toast = useToast();
   const methods = useRegisterMethods();
   const balanceCents = Math.round(order.balance * 100);
-  const [lines, setLines] = useState(() => newPaymentLines(balanceCents, ['pix', 'cash', 'debit', 'credit'].includes(order.paymentMethod) ? order.paymentMethod : 'pix'));
+  const [lines, setLines] = useState(() => newPaymentLines(balanceCents));
   const [note, setNote] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -220,7 +223,7 @@ export function PaymentDialog({ order, onClose, onDone }) {
   const [cashOpen, setCashOpen] = useState(true);
   const checkCash = useCallback(() => call('/admin/cash-status').then((r) => setCashOpen(r.open)).catch(() => {}), [call]);
   useEffect(() => { checkCash(); }, [checkCash]);
-  useEffect(() => { setLines((current) => current.map((line) => (methods.includes(line.method) ? line : { ...line, method: 'pix' }))); }, [methods]);
+  useEffect(() => { setLines((current) => current.map((line) => (!line.method || methods.includes(line.method) ? line : { ...line, method: '' }))); }, [methods]);
   const validation = linesError(lines, balanceCents) || (hasCashLine(lines) && !cashOpen ? 'Abra o caixa para registrar este recebimento.' : '')
     || (hasCreditLine(lines) && order.buyerPhone.replace(/\D/g, '').length < 10 ? 'Para deixar parte no fiado, o pedido precisa ter o telefone do cliente (edite os dados do cliente).' : '');
 

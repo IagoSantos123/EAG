@@ -191,8 +191,37 @@ router.patch('/categories/:id', auth('catalog.manage'), asyncRoute(async (req, r
 router.get('/teams', auth('settings.manage'), asyncRoute(async (_req, res) => {
   const { rows } = await pool.query('SELECT * FROM teams ORDER BY name'); res.json(rows);
 }));
+// Palavras do nome sem acento, maiúsculas, símbolos, conectivos ("e", "de"...) e plural, para comparar equipes.
+const teamWords = (name) => name.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ')
+  .split(' ').filter((word) => word.length > 2).map((word) => (word.length > 4 ? word.replace(/s$/, '') : word));
+
+// Mesma palavra, tolerando erro de digitação: 1 letra diferente em palavras médias; 2 nas longas que começam igual
+// ("progeccao" x "projecao" sim; "recepcao" x "refeicao" não).
+function sameWord(a, b) {
+  if (a === b) return true;
+  const shortest = Math.min(a.length, b.length);
+  const limit = shortest >= 7 && a.slice(0, 3) === b.slice(0, 3) ? 2 : shortest >= 5 ? 1 : 0;
+  if (!limit || Math.abs(a.length - b.length) > limit) return false;
+  let previous = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const row = [i];
+    for (let j = 1; j <= b.length; j++) row[j] = Math.min(previous[j] + 1, row[j - 1] + 1, previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    previous = row;
+  }
+  return previous[b.length] <= limit;
+}
+
 router.post('/teams', auth('settings.manage'), asyncRoute(async (req, res) => {
   const input = parse(z.object({ name: z.string().trim().min(2, 'Nome de equipe muito curto.').max(100), description: z.string().max(300).default('') }), req.body, 'Nome de equipe inválido.');
+  // Evita equipes duplicadas com grafia diferente ("`Projeção" x "Estrutura e Projeção", "Animacao" x "Animação").
+  const words = teamWords(input.name);
+  const similar = (await pool.query('SELECT name FROM teams')).rows.find((team) => {
+    const other = teamWords(team.name);
+    // Igual, ou todas as palavras de um nome aparecem no outro (palavras inteiras: "Oração" não colide com "Decoração").
+    const within = (a, b) => a.every((w) => b.some((x) => sameWord(w, x)));
+    return words.length && other.length && (within(words, other) || within(other, words));
+  });
+  if (similar) return fail(res, 409, `Já existe a equipe "${similar.name}". Use essa (se estiver inativa, ative-a).`);
   try {
     const result = await pool.query('INSERT INTO teams(name,description) VALUES($1,$2) RETURNING id', [input.name, input.description]);
     await audit(pool, req.user, 'team.create', 'team', result.rows[0].id, input);
