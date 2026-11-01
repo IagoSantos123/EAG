@@ -290,3 +290,12 @@
 .pos-note:focus { border-style: solid; border-color: var(--blue); outline: none; background: #fff; }
 .pos-tag { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 999px; background: var(--purple-50); color: var(--purple); font-size: 11px; font-weight: 700; vertical-align: 1px; }
 select.needs-choice { border-color: var(--amber); color: var(--muted); }
+.k-card footer .k-skip { flex: 0 0 auto; width: auto; max-width: 128px; font-size: 12px; padding: 5px 6px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: #fff; }
+.k-counter { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
+/* Balcão: preço do item editável na comanda (sem mudar o cadastro). */
+.pos-price { border: 0; background: none; padding: 2px 4px; border-radius: 6px; text-align: right; font: inherit; font-weight: 700; display: grid; justify-items: end; }
+.pos-price:hover { background: var(--surface-2); }
+.pos-price.adjusted { color: var(--amber); }
+.pos-price small { font-weight: 500; text-decoration: line-through; }
+.pos-price-input { width: 70px; padding: 4px 6px; border: 1px solid var(--blue); border-radius: 6px; text-align: right; font-weight: 700; }
+.price-adjusted { display: block; font-weight: 500; color: var(--amber); font-size: 11px; }

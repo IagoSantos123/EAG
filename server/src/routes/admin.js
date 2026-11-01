@@ -46,6 +46,8 @@ const productSchema = z.object({
   adminNotes: z.string().trim().max(1000).default(''),
   needsReview: z.boolean().default(false),
   sortOrder: z.number().int().min(0).max(10000).default(0),
+  // Falso para itens que saem prontos do balcão (não aparecem na tela da cozinha).
+  kitchen: z.boolean().default(true),
   optionGroups: z.array(optionGroupSchema).max(10, 'Máximo de 10 grupos de opções.').default([])
 }).superRefine((product, ctx) => {
   const names = product.optionGroups.map((group) => group.name.toLowerCase());
@@ -62,7 +64,7 @@ function serializeProduct(p) {
     id: p.id, name: p.name, description: p.description || '', mode: p.mode, categoryId: p.category_id, category: p.category_name || '',
     price: toMoney(p.price_cents), available: p.available, archived: p.archived, imageUrl: p.image_url || '', stock: p.stock,
     prepMinutes: p.prep_minutes, allowNotes: p.allow_notes, customTextLabel: p.custom_text_label, customTextRequired: p.custom_text_required,
-    adminNotes: p.admin_notes, needsReview: p.needs_review, sortOrder: p.sort_order, updatedAt: p.updated_at,
+    adminNotes: p.admin_notes, needsReview: p.needs_review, sortOrder: p.sort_order, kitchen: p.kitchen !== false, updatedAt: p.updated_at,
     optionGroups: (p.option_groups || []).map((group) => ({
       name: group.name, min: Number(group.min ?? (group.required ? 1 : 0)), max: Number(group.max ?? 1),
       options: (group.options || []).map((option) => ({ name: option.name, extra: toMoney(optionExtraCents(option)), available: option.available !== false }))
@@ -89,10 +91,10 @@ router.post('/products', auth('catalog.manage'), asyncRoute(async (req, res) => 
     const duplicate = await db.query('SELECT 1 FROM products WHERE mode=$1 AND LOWER(name)=LOWER($2) AND archived=FALSE', [p.mode, p.name]);
     if (duplicate.rowCount) throw new HttpError(409, 'Já existe um produto com este nome neste catálogo.');
     const { rows } = await db.query(`INSERT INTO products(name,description,mode,category_id,price_cents,available,image_url,stock,prep_minutes,option_groups,
-        allow_notes,custom_text_label,custom_text_required,admin_notes,needs_review,sort_order)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id`,
+        allow_notes,custom_text_label,custom_text_required,admin_notes,needs_review,sort_order,kitchen)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING id`,
     [p.name, p.description, p.mode, p.categoryId, toCents(p.price), p.available, p.imageUrl, p.stock, p.prepMinutes, JSON.stringify(storedGroups(p.optionGroups)),
-      p.allowNotes, p.customTextLabel, p.customTextRequired && Boolean(p.customTextLabel), p.adminNotes, p.needsReview, p.sortOrder]);
+      p.allowNotes, p.customTextLabel, p.customTextRequired && Boolean(p.customTextLabel), p.adminNotes, p.needsReview, p.sortOrder, p.kitchen]);
     await audit(db, req.user, 'product.create', 'product', rows[0].id, { name: p.name, price: p.price });
     return rows[0].id;
   });
@@ -110,10 +112,10 @@ router.put('/products/:id', auth('catalog.manage'), asyncRoute(async (req, res) 
     const duplicate = await db.query('SELECT 1 FROM products WHERE mode=$1 AND LOWER(name)=LOWER($2) AND archived=FALSE AND id<>$3', [p.mode, p.name, id]);
     if (duplicate.rowCount) throw new HttpError(409, 'Já existe outro produto com este nome neste catálogo.');
     await db.query(`UPDATE products SET name=$1,description=$2,mode=$3,category_id=$4,price_cents=$5,available=$6,image_url=$7,stock=$8,prep_minutes=$9,
-        option_groups=$10,allow_notes=$11,custom_text_label=$12,custom_text_required=$13,admin_notes=$14,needs_review=$15,sort_order=$16,updated_at=NOW()
+        option_groups=$10,allow_notes=$11,custom_text_label=$12,custom_text_required=$13,admin_notes=$14,needs_review=$15,sort_order=$16,kitchen=$18,updated_at=NOW()
       WHERE id=$17`,
     [p.name, p.description, p.mode, p.categoryId, toCents(p.price), p.available, p.imageUrl, p.stock, p.prepMinutes, JSON.stringify(storedGroups(p.optionGroups)),
-      p.allowNotes, p.customTextLabel, p.customTextRequired && Boolean(p.customTextLabel), p.adminNotes, p.needsReview, p.sortOrder, id]);
+      p.allowNotes, p.customTextLabel, p.customTextRequired && Boolean(p.customTextLabel), p.adminNotes, p.needsReview, p.sortOrder, id, p.kitchen]);
     const old = before.rows[0];
     await audit(db, req.user, 'product.update', 'product', id, {
       name: p.name,

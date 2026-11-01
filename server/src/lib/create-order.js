@@ -25,6 +25,8 @@ const baseFields = {
     productId: z.coerce.number().int().positive(),
     // Catálogo do item (balcão): uma comanda pode ter lanchonete e artigos juntos.
     mode: z.enum(['religious', 'snack']).optional(),
+    // Preço da unidade ajustado na comanda (promoção, valor especial). Só vale em vendas da equipe.
+    priceOverride: z.number().min(0, 'Preço inválido.').max(10000, 'Preço inválido.').nullable().optional(),
     quantity: z.number().int().min(1).max(30, 'Quantidade máxima por item: 30.'),
     selectedOptions: z.array(z.object({ group: z.string().max(80), option: z.string().max(80) })).max(40).default([]),
     note: z.string().max(300, 'Observação muito longa (máximo 300 caracteres).').default(''),
@@ -98,6 +100,11 @@ export async function insertOrder(db, input, settings, { paymentMethod, onCredit
     const product = found.rows[0];
     if (product.stock !== null && product.stock < item.quantity) throw new HttpError(409, `${product.name}: estoque insuficiente (restam ${product.stock}).`);
     const priced = priceItem(product, item);
+    if (actor && item.priceOverride != null && toCents(item.priceOverride) !== priced.unitCents) {
+      priced.priceAdjustedFromCents = priced.unitCents;
+      priced.unitCents = toCents(item.priceOverride);
+      priced.totalCents = priced.unitCents * priced.quantity;
+    }
     subtotal += priced.totalCents;
     snapshot.push(priced);
     if (product.stock !== null) await db.query('UPDATE products SET stock=stock-$1,updated_at=NOW() WHERE id=$2', [item.quantity, product.id]);
@@ -127,8 +134,19 @@ export async function insertOrder(db, input, settings, { paymentMethod, onCredit
     subtotal, total, deliveryFeeCents, paymentMethod, deadline, input.serviceType,
     delivery ? input.deliveryAddress : '', delivery ? input.deliveryReference : '', delivery ? input.deliveryNote : '',
     tableNumber, cashChangeFor, ticket.rows[0].next, input.clientRequestId || null, actor ? 'balcao' : 'site', onCredit, actor?.name || 'Comprador']);
-  const order = rows[0];
+  let order = rows[0];
   await addHistory(db, { orderId: order.id, kind: 'order', status: 'created', note: actor ? 'Venda registrada no balcão' : 'Pedido criado pelo site', actor: actor || { name: 'Comprador' } });
+  const adjusted = snapshot.filter((item) => item.priceAdjustedFromCents != null);
+  if (adjusted.length) {
+    const money = (cents) => toMoney(cents).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+    await addHistory(db, { orderId: order.id, kind: 'order', status: 'price_adjusted', actor,
+      note: `Preço ajustado na comanda: ${adjusted.map((item) => `${item.name} ${money(item.priceAdjustedFromCents)} → ${money(item.unitCents)}`).join('; ')}` });
+  }
+  // Lanchonete só com itens do balcão (salgado, café, bebida...): não passa pela cozinha, já nasce pronto para entregar.
+  if (input.mode === 'snack' && snapshot.every((item) => item.kitchen === false)) {
+    order = (await db.query("UPDATE orders SET production_status='ready', ready_at=NOW() WHERE id=$1 RETURNING *", [order.id])).rows[0];
+    await addHistory(db, { orderId: order.id, kind: 'production', status: 'ready', fromStatus: 'new', note: 'Pronto no balcão (sem itens de cozinha)', actor: actor || { name: 'Sistema' } });
+  }
   if (onCredit) await addHistory(db, { orderId: order.id, kind: 'payment', status: 'credit', note: 'Lançado como fiado', actor: actor || { name: 'Comprador' } });
   return order;
 }

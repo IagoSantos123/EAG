@@ -386,6 +386,18 @@ const MIGRATIONS = [
         await client.query('UPDATE products SET option_groups=$1, updated_at=NOW() WHERE id=$2', [JSON.stringify([sabor, ...groups]), product.id]);
       }
     }
+  },
+  {
+    // Itens que saem prontos do balcão (salgados, cafés, bebidas, doces): não vão para a tela da cozinha.
+    id: '2026-11-007-itens-do-balcao',
+    async run(client) {
+      await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS kitchen BOOLEAN NOT NULL DEFAULT TRUE');
+      // Nomes exatos: no banco local (locale C) o LOWER() não converte letras acentuadas ("Água").
+      await client.query(`UPDATE products SET kitchen=FALSE, updated_at=NOW() WHERE mode='snack' AND name = ANY($1)`, [[
+        'Salgado', 'Torta', 'Dindim gourmet', 'Café (copo)', 'Café com leite', 'Cápsula 3 Corações', 'Chocolate quente',
+        'Refrigerante 250 ml', 'Suco (copo)', 'Água 500 ml', 'Água com gás', 'Pipoca Karintó', 'JUJUBA', 'PASTILHA', 'BALA IORGUTE', 'Tirinete'
+      ]]);
+    }
   }
 ];
 

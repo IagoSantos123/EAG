@@ -130,7 +130,11 @@ router.post('/orders/:id/production', auth('kitchen.move'), asyncRoute(async (re
     }
     const direction = checkTransition(order, input.to, req.user.role, { reason: input.reason, acknowledgeUnpaid: input.acknowledgeUnpaid, settings });
     const sets = ['production_status=$1', 'updated_at=NOW()'];
-    if (direction === 'forward' && PRODUCTION_TIMESTAMP[input.to]) sets.push(`${PRODUCTION_TIMESTAMP[input.to]}=NOW()`);
+    if (direction === 'forward') {
+      // Etapas puladas também ganham horário (a linha do tempo do pedido fica completa).
+      const steps = PRODUCTION_FLOW.slice(PRODUCTION_FLOW.indexOf(order.production_status) + 1, PRODUCTION_FLOW.indexOf(input.to) + 1);
+      for (const step of steps) if (PRODUCTION_TIMESTAMP[step]) sets.push(`${PRODUCTION_TIMESTAMP[step]}=${step === input.to ? 'NOW()' : `COALESCE(${PRODUCTION_TIMESTAMP[step]},NOW())`}`);
+    }
     // Ao desfazer, limpa o horário da etapa que foi revertida.
     if (direction === 'backward' && PRODUCTION_TIMESTAMP[order.production_status]) sets.push(`${PRODUCTION_TIMESTAMP[order.production_status]}=NULL`);
     await db.query(`UPDATE orders SET ${sets.join(',')} WHERE id=$2`, [input.to, id]);

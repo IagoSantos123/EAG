@@ -8,7 +8,7 @@ import { ProductThumb } from '../shop/productUtils.jsx';
 
 const blankProduct = (mode = 'snack') => ({
   id: null, name: '', description: '', mode, categoryId: null, price: '', available: true, imageUrl: '', trackStock: false, stock: '',
-  prepMinutes: '', allowNotes: true, customTextLabel: '', customTextRequired: false, adminNotes: '', needsReview: false, sortOrder: 0, optionGroups: []
+  prepMinutes: '', allowNotes: true, customTextLabel: '', customTextRequired: false, adminNotes: '', needsReview: false, sortOrder: 0, optionGroups: [], kitchen: true
 });
 
 const toForm = (p) => ({
@@ -106,7 +106,7 @@ function ProductEditor({ initial, categories, onClose, onSaved }) {
     const prep = form.prepMinutes === '' ? null : Number(form.prepMinutes);
     if (prep != null && (!Number.isInteger(prep) || prep < 0)) { setError('Tempo de preparo inválido.'); return; }
     const body = { name: form.name.trim(), description: form.description.trim(), mode: form.mode, categoryId: form.categoryId ? Number(form.categoryId) : null, price,
-      available: form.available, imageUrl: form.imageUrl.trim(), stock, prepMinutes: prep, allowNotes: form.allowNotes, customTextLabel: form.customTextLabel.trim(),
+      available: form.available, imageUrl: form.imageUrl.trim(), stock, prepMinutes: prep, allowNotes: form.allowNotes, customTextLabel: form.customTextLabel.trim(), kitchen: form.kitchen !== false,
       customTextRequired: form.customTextRequired, adminNotes: form.adminNotes.trim(), needsReview: form.needsReview, sortOrder: Number(form.sortOrder) || 0, optionGroups: groups };
     setBusy(true);
     try {
@@ -137,6 +137,8 @@ function ProductEditor({ initial, categories, onClose, onSaved }) {
         <div className="toggles">
           <Toggle checked={form.available} onChange={(v) => set('available', v)} label="Disponível no catálogo" />
           <Toggle checked={form.trackStock} onChange={(v) => set('trackStock', v)} label="Controlar estoque" description="Ao zerar, o produto sai do catálogo automaticamente." />
+          {form.mode === 'snack' && <Toggle checked={form.kitchen !== false} onChange={(v) => set('kitchen', v)} label="Preparado na cozinha"
+            description="Desligue para itens que saem prontos do balcão (salgado, café, bebida, doce): não aparecem na tela da cozinha." />}
         </div>
       </section>
       <section><h3>Imagem</h3>

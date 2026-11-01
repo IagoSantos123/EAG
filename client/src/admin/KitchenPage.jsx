@@ -14,6 +14,9 @@ const STAGE_SINCE = { new: 'createdAt', in_production: 'productionStartedAt', re
 // Minutos de espera para alerta (amarelo) e atraso (vermelho) em cada etapa.
 const LIMITS = { new: [5, 10], in_production: [15, 25], ready: [5, 10], awaiting_pickup: [10, 20] };
 
+// Pedido com algo para a cozinha preparar (itens antigos, sem a marcação, contam como cozinha).
+const hasKitchenItems = (order) => order.items.some((item) => item.kitchen !== false);
+
 function waitLevel(order, now) {
   const limits = LIMITS[order.productionStatus];
   const since = order[STAGE_SINCE[order.productionStatus]] || order.createdAt;
@@ -23,7 +26,7 @@ function waitLevel(order, now) {
 }
 
 function KitchenCard({ order, now, role, requirePix, busy, onMove, onOpen, fresh }) {
-  const { next, previous } = productionActions(order, role);
+  const { next, previous, ahead } = productionActions(order, role);
   const waitingPix = next === 'in_production' && requirePix && order.paymentMethod === 'pix' && !order.onCredit && order.paymentStatus !== 'confirmed';
   const since = order[STAGE_SINCE[order.productionStatus]] || order.createdAt;
   const level = waitLevel(order, now);
@@ -39,7 +42,14 @@ function KitchenCard({ order, now, role, requirePix, busy, onMove, onOpen, fresh
       <div className="k-buyer"><b>{order.buyerName}</b><span>{order.teamName}</span></div>
       <div className="k-badges"><ServiceBadge order={order} /><PaymentBadge order={order} /></div>
       {order.serviceType === 'delivery' && <p className="k-address"><MapPin size={13} /> {order.deliveryAddress}{order.deliveryReference ? ` — ${order.deliveryReference}` : ''}</p>}
-      <OrderItems items={order.items} compact />
+      {(() => {
+        // Itens do balcão (salgado, café, bebida) aparecem discretos: a cozinha foca no que precisa preparar.
+        const kitchenItems = order.items.filter((item) => item.kitchen !== false);
+        const counterItems = order.items.filter((item) => item.kitchen === false);
+        if (!kitchenItems.length) return <OrderItems items={order.items} compact />;
+        return <><OrderItems items={kitchenItems} compact />
+          {counterItems.length > 0 && <small className="k-counter">No balcão: {counterItems.map((item) => `${item.quantity}× ${item.name}`).join(', ')}</small>}</>;
+      })()}
       {order.productionStartedAt && order.productionStatus === 'in_production' && <small className="muted">Produção iniciada às {time(order.productionStartedAt)}</small>}
       <small className="k-number">{order.orderNumber}</small>
     </div>
@@ -49,6 +59,10 @@ function KitchenCard({ order, now, role, requirePix, busy, onMove, onOpen, fresh
       {next && (waitingPix
         ? <span className="k-wait">Aguardando confirmação do PIX</span>
         : <button type="button" className={`btn btn-sm ${next === 'finalized' ? 'btn-success' : 'btn-primary'}`} disabled={busy} onClick={() => onMove(order, next)}>{ADVANCE_LABELS[next]} <ArrowRight size={15} /></button>)}
+      {!waitingPix && ahead.length > 0 && <select className="k-skip" value="" disabled={busy} aria-label="Pular para outra etapa" onChange={(e) => e.target.value && onMove(order, e.target.value)}>
+        <option value="">Pular para…</option>
+        {ahead.map((step) => <option key={step} value={step}>{PRODUCTION_LABELS[step]}</option>)}
+      </select>}
     </footer>
   </article>;
 }
@@ -72,7 +86,8 @@ export default function KitchenPage() {
     try {
       const result = await call(`/admin/kitchen?${period.query}`);
       // Destaca (e avisa com som) pedidos que acabaram de chegar.
-      const ids = new Set(result.orders.map((o) => o.id));
+      // Só conta como novo (som/impressão) o que aparece neste aparelho.
+      const ids = new Set(result.orders.filter((o) => readJson('eag-kitchen-show-counter', false) || hasKitchenItems(o)).map((o) => o.id));
       if (known.current) {
         const arrived = [...ids].filter((id) => !known.current.has(id));
         if (arrived.length) {
@@ -80,7 +95,7 @@ export default function KitchenPage() {
           setTimeout(() => setFresh((current) => new Set([...current].filter((id) => !arrived.includes(id)))), 15000);
           if (readJson('eag-kitchen-sound', false)) beep();
           // Aparelho com a impressora: imprime sozinho a comanda de cada pedido novo.
-          if (readJson('eag-kitchen-autoprint', false)) result.orders.filter((o) => arrived.includes(o.id)).forEach(printComanda);
+          if (readJson('eag-kitchen-autoprint', false)) result.orders.filter((o) => arrived.includes(o.id) && hasKitchenItems(o)).forEach(printComanda);
         }
       }
       known.current = ids;
@@ -95,14 +110,17 @@ export default function KitchenPage() {
   const { move, busyId } = useProductionMove(load);
   const toggleSound = () => { const value = !sound; setSound(value); writeJson('eag-kitchen-sound', value); if (value) beep(); };
   const [autoPrint, setAutoPrint] = useState(() => readJson('eag-kitchen-autoprint', false));
+  // Pedidos só com itens do balcão: escondidos na cozinha; o notebook do balcão liga para entregar.
+  const [showCounter, setShowCounter] = useState(() => readJson('eag-kitchen-show-counter', false));
+  const toggleShowCounter = () => { const value = !showCounter; setShowCounter(value); writeJson('eag-kitchen-show-counter', value); };
   const toggleAutoPrint = () => { const value = !autoPrint; setAutoPrint(value); writeJson('eag-kitchen-autoprint', value); };
 
   const teams = useMemo(() => [...new Set((data?.orders || []).map((o) => o.teamName))].sort(), [data]);
   const filtered = useMemo(() => {
     const term = filters.q.trim().toLowerCase().replace(/^#/, '');
-    return (data?.orders || []).filter((o) => (!term || String(o.ticket) === term || o.orderNumber.toLowerCase().includes(term) || o.buyerName.toLowerCase().includes(term))
+    return (data?.orders || []).filter((o) => (showCounter || hasKitchenItems(o)) && (!term || String(o.ticket) === term || o.orderNumber.toLowerCase().includes(term) || o.buyerName.toLowerCase().includes(term))
       && (!filters.team || o.teamName === filters.team) && (!filters.service || o.serviceType === filters.service) && (!filters.payment || o.paymentStatus === filters.payment));
-  }, [data, filters]);
+  }, [data, filters, showCounter]);
   const columns = useMemo(() => Object.fromEntries(PRODUCTION_STEPS.map((step) => {
     const list = filtered.filter((o) => o.productionStatus === step);
     // Mais antigos primeiro; finalizados mostram os mais recentes primeiro.
@@ -116,9 +134,9 @@ export default function KitchenPage() {
     const id = Number(event.dataTransfer.getData('text/plain'));
     const order = data?.orders.find((o) => o.id === id);
     if (!order || order.productionStatus === step) return;
-    const { next, previous } = productionActions(order, user.role);
-    if (step !== next && step !== previous) return;
-    if (step === 'in_production' && next === step && data.requirePixConfirmation && order.paymentMethod === 'pix' && !order.onCredit && order.paymentStatus !== 'confirmed') return;
+    const { next, previous, ahead } = productionActions(order, user.role);
+    if (step !== next && step !== previous && !ahead.includes(step)) return;
+    if (PRODUCTION_STEPS.indexOf(step) >= PRODUCTION_STEPS.indexOf('in_production') && order.productionStatus === 'new' && data.requirePixConfirmation && order.paymentMethod === 'pix' && !order.onCredit && order.paymentStatus !== 'confirmed') return;
     move(order, step);
   };
   const set = (key) => (event) => setFilters((current) => ({ ...current, [key]: event.target.value }));
@@ -127,6 +145,8 @@ export default function KitchenPage() {
     <header className="admin-page-head">
       <div><h1>Cozinha / Produção</h1><p>Pedidos da lanchonete, do mais antigo para o mais novo em cada etapa.</p></div>
       <div className="head-actions">
+        <button type="button" className={`btn btn-sm ${showCounter ? 'btn-primary' : 'btn-outline'}`} onClick={toggleShowCounter} title="Pedidos só com salgados, cafés, bebidas e doces (saem prontos do balcão)">
+          Pedidos do balcão: {showCounter ? 'mostrando' : 'ocultos'}</button>
         <button type="button" className="btn btn-outline btn-sm" onClick={toggleAutoPrint} title="Imprime a comanda de cada pedido novo neste aparelho">
           <Printer size={15} /> Imprimir novos: {autoPrint ? 'sim' : 'não'}</button>
         <button type="button" className="btn btn-outline btn-sm" onClick={toggleSound} title="Aviso sonoro de novo pedido">{sound ? <Bell size={15} /> : <BellOff size={15} />} Som {sound ? 'ligado' : 'desligado'}</button>

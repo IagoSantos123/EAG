@@ -2,7 +2,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CheckCircle2, Minus, Plus, Printer, Search, Trash2 } from 'lucide-react';
 import { ErrorState, Modal, Spinner } from '../components/ui.jsx';
-import { imageUrl, money, request, uuid } from '../lib/api.js';
+import { imageUrl, money, parseMoney, request, uuid } from '../lib/api.js';
 import { printComanda } from './comanda.js';
 import { PAYMENT_METHODS, SERVICE_TYPES } from '../lib/labels.js';
 import { ProductThumb, startingPrice } from '../shop/productUtils.jsx';
@@ -48,7 +48,9 @@ export default function PosPage() {
   useLiveRefresh(checkCash, ['cash']);
 
   const deliveryFee = customer.serviceType === 'delivery' ? Number(config?.deliveryFee || 0) : 0;
-  const subtotal = Math.round(lines.reduce((sum, line) => sum + line.unitPrice * line.quantity, 0) * 100) / 100;
+  // Preço da unidade na comanda: o ajustado (promoção, valor especial) ou o do cadastro.
+  const unitOf = (line) => (line.priceOverride ?? line.unitPrice);
+  const subtotal = Math.round(lines.reduce((sum, line) => sum + unitOf(line) * line.quantity, 0) * 100) / 100;
   const totalCents = Math.round((subtotal + deliveryFee) * 100);
   // Mantém o valor da forma de pagamento acompanhando o total enquanto há uma só forma.
   useEffect(() => {
@@ -68,6 +70,13 @@ export default function PosPage() {
   const quickAdd = (product) => {
     if (product.optionGroups.length || product.customTextLabel) { setConfiguring(product); return; }
     addLine({ productId: product.id, mode, name: product.name, unitPrice: product.price, quantity: 1, selectedOptions: [], optionLabels: [], note: '', customText: '' });
+  };
+  const [editingPrice, setEditingPrice] = useState(null);
+  const setPrice = (key, text) => {
+    const value = parseMoney(text);
+    setEditingPrice(null);
+    if (text === '' || Number.isNaN(value) || value < 0) return;
+    setLines((current) => current.map((l) => (l.key === key ? { ...l, priceOverride: Math.abs(value - l.unitPrice) < 0.005 ? undefined : value } : l)));
   };
   const setNote = (key, note) => setLines((current) => current.map((l) => (l.key === key ? { ...l, note: note.slice(0, 300) } : l)));
   const setQty = (key, quantity) => setLines((current) => (quantity <= 0 ? current.filter((l) => l.key !== key) : current.map((l) => (l.key === key ? { ...l, quantity: Math.min(30, quantity) } : l))));
@@ -108,7 +117,7 @@ export default function PosPage() {
         clientRequestId: requestId.current, mode: hasSnack ? 'snack' : 'religious', buyerName: customer.buyerName.trim(), buyerPhone: customer.buyerPhone.trim(), teamId: customer.teamId || null,
         serviceType: customer.serviceType, tableNumber: customer.serviceType === 'dine_in' ? customer.tableNumber : '',
         deliveryAddress: customer.serviceType === 'delivery' ? customer.deliveryAddress : '', deliveryReference: customer.serviceType === 'delivery' ? customer.deliveryReference : '',
-        items: lines.map((l) => ({ productId: l.productId, mode: l.mode, quantity: l.quantity, selectedOptions: l.selectedOptions, note: l.note || '', customText: l.customText || '' })),
+        items: lines.map((l) => ({ productId: l.productId, mode: l.mode, priceOverride: l.priceOverride ?? null, quantity: l.quantity, selectedOptions: l.selectedOptions, note: l.note || '', customText: l.customText || '' })),
         payment
       } });
       setDone({ ...result, payType, hasSnack });
@@ -158,7 +167,12 @@ export default function PosPage() {
               <span>{l.quantity}</span>
               <button type="button" onClick={() => setQty(l.key, l.quantity + 1)} aria-label="Aumentar"><Plus size={14} /></button>
             </div>
-            <span className="line-total">{money(l.unitPrice * l.quantity)}</span>
+            {editingPrice === l.key
+              ? <input className="pos-price-input" autoFocus inputMode="decimal" defaultValue={unitOf(l).toFixed(2).replace('.', ',')} aria-label={`Preço da unidade de ${l.name}`}
+                onBlur={(e) => setPrice(l.key, e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') setEditingPrice(null); }} />
+              : <button type="button" className={`line-total pos-price ${l.priceOverride != null ? 'adjusted' : ''}`} onClick={() => setEditingPrice(l.key)}
+                title="Tocar para mudar o preço só nesta comanda">{money(unitOf(l) * l.quantity)}
+                {l.priceOverride != null && <small>era {money(l.unitPrice * l.quantity)}</small>}</button>}
           </li>)}
         </ul>}
 

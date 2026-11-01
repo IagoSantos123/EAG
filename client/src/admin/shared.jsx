@@ -62,14 +62,16 @@ export function StatusBadge({ order }) {
 const FORWARD_ROLES = { in_production: ['admin', 'kitchen'], ready: ['admin', 'kitchen'], awaiting_pickup: ['admin', 'kitchen', 'operator'], finalized: ['admin', 'kitchen', 'operator'] };
 
 export function productionActions(order, role) {
-  if (order.status !== 'active') return { next: null, previous: null };
+  if (order.status !== 'active') return { next: null, previous: null, ahead: [] };
   const index = PRODUCTION_STEPS.indexOf(order.productionStatus);
   const next = PRODUCTION_STEPS[index + 1];
   const previous = PRODUCTION_STEPS[index - 1];
   const backRoles = order.productionStatus === 'finalized' ? ['admin'] : ['admin', 'kitchen'];
   return {
     next: next && FORWARD_ROLES[next].includes(role) ? next : null,
-    previous: previous && backRoles.includes(role) ? previous : null
+    previous: previous && backRoles.includes(role) ? previous : null,
+    // Etapas além da próxima, para pular direto (ex.: de "Em produção" para "Aguardando retirada").
+    ahead: PRODUCTION_STEPS.slice(index + 2).filter((step) => FORWARD_ROLES[step].includes(role))
   };
 }
 
@@ -303,7 +305,7 @@ export function OrderItems({ items, compact }) {
         {item.options.length > 0 && <small>{item.options.map((o) => o.option).join(' · ')}</small>}
         {item.customText && <small>{item.customTextLabel}: {item.customText}</small>}
         {item.note && <small className="note">Obs.: {item.note}</small>}</div>
-      {!compact && <b>{money(item.total)}</b>}
+      {!compact && <b>{money(item.total)}{item.originalUnitPrice != null && <small className="price-adjusted">preço ajustado (era {money(item.originalUnitPrice)})</small>}</b>}
     </li>)}
   </ul>;
 }
