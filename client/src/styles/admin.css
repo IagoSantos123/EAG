@@ -97,7 +97,7 @@
 /* Kanban da cozinha */
 .k-jump { display: none; }
 .kanban { display: grid; grid-template-columns: repeat(5, minmax(205px, 1fr)); gap: 10px; overflow-x: auto; padding-bottom: 8px; align-items: start; }
-.k-col { background: #efeff1; border-radius: var(--radius); min-height: 60vh; display: flex; flex-direction: column; transition: background .15s; }
+.k-col { background: #efeff1; border-radius: var(--radius); min-height: 60vh; min-width: 0; display: flex; flex-direction: column; transition: background .15s; }
 .k-col.drag-over { background: #e3eef5; outline: 2px dashed var(--blue); }
 .k-col > header { display: flex; align-items: center; justify-content: space-between; padding: 12px 12px 8px; }
 .k-col h2 { font-size: 14px; font-weight: 700; }
@@ -109,7 +109,7 @@
 .k-col-finalized > header { border-top: 3px solid var(--green); border-radius: var(--radius) var(--radius) 0 0; }
 .k-list { display: grid; gap: 8px; padding: 0 8px 10px; }
 .k-empty { color: var(--muted); font-size: 13px; text-align: center; padding: 18px 0; margin: 0; }
-.k-card { background: #fff; border: 1px solid var(--line); border-radius: var(--radius-sm); box-shadow: var(--shadow-sm); border-left: 3px solid transparent; }
+.k-card { background: #fff; border: 1px solid var(--line); border-radius: var(--radius-sm); box-shadow: var(--shadow-sm); border-left: 3px solid transparent; min-width: 0; }
 .k-card[draggable=true] { cursor: grab; }
 .k-card.k-warn { border-left-color: #e09400; }
 .k-card.k-late { border-left-color: var(--primary); }
@@ -130,8 +130,9 @@
 .order-items.compact { margin: 2px 0 0; padding: 8px 0 0; border-top: 1px dashed var(--line); gap: 4px; }
 .order-items.compact li { grid-template-columns: 28px 1fr; font-size: 13px; }
 .k-number { color: var(--muted); font-size: 11px; }
-.k-card footer { display: flex; align-items: center; justify-content: flex-end; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--line); }
-.k-card footer .btn { flex: 1; }
+/* O rodapé quebra em duas linhas quando a coluna é estreita (o cartão nunca passa da largura da coluna). */
+.k-card footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--line); }
+.k-card footer .btn { flex: 1 1 0; min-width: 0; white-space: normal; line-height: 1.15; text-align: center; padding-block: 6px; }
 .k-wait { flex: 1; font-size: 12px; font-weight: 600; color: var(--amber); text-align: center; }
 
 /* Venda no balcão */
@@ -290,7 +291,7 @@
 .pos-note:focus { border-style: solid; border-color: var(--blue); outline: none; background: #fff; }
 .pos-tag { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 999px; background: var(--purple-50); color: var(--purple); font-size: 11px; font-weight: 700; vertical-align: 1px; }
 select.needs-choice { border-color: var(--amber); color: var(--muted); }
-.k-card footer .k-skip { flex: 0 0 auto; width: auto; max-width: 128px; font-size: 12px; padding: 5px 6px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: #fff; }
+.k-card footer .k-skip { flex: 1 1 100%; min-width: 0; font-size: 12px; padding: 5px 6px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: #fff; color: var(--muted); }
 .k-counter { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
 /* Balcão: preço do item editável na comanda (sem mudar o cadastro). */
 .pos-price { border: 0; background: none; padding: 2px 4px; border-radius: 6px; text-align: right; font: inherit; font-weight: 700; display: grid; justify-items: end; }
@@ -299,3 +300,36 @@ select.needs-choice { border-color: var(--amber); color: var(--muted); }
 .pos-price small { font-weight: 500; text-decoration: line-through; }
 .pos-price-input { width: 70px; padding: 4px 6px; border: 1px solid var(--blue); border-radius: 6px; text-align: right; font-weight: 700; }
 .price-adjusted { display: block; font-weight: 500; color: var(--amber); font-size: 11px; }
+
+/* Cozinha: modo TV (tela cheia na TV da cozinha). Sem menu e filtros; colunas ocupam a tela e cada uma rola sozinha. */
+body.kitchen-tv .admin-shell { grid-template-columns: minmax(0, 1fr); }
+body.kitchen-tv .admin-side, body.kitchen-tv .admin-topbar, body.kitchen-tv .admin-overlay { display: none; }
+body.kitchen-tv .admin-main { padding: 0; }
+.kitchen-page.is-tv { height: 100vh; max-width: none; display: flex; flex-direction: column; gap: 0; background: #e7e7ea; }
+.kitchen-page.is-tv > .admin-page-head, .kitchen-page.is-tv > .filters-bar, .kitchen-page.is-tv .k-jump { display: none; }
+.kitchen-page.is-tv > .alert { margin: 8px 12px 0; }
+.k-tv-bar { display: flex; align-items: center; gap: 16px; padding: 8px 14px; background: #1d1d1f; color: #fff; flex-wrap: wrap; }
+.k-tv-bar > b { font-size: 20px; }
+.k-tv-counts { display: flex; gap: 14px; flex-wrap: wrap; font-size: 15px; color: #c9c9cf; flex: 1; }
+.k-tv-counts b { color: #fff; font-size: 18px; margin-left: 4px; }
+.k-tv-bar time { font-size: 24px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.k-tv-bar .btn { background: transparent; color: #fff; border-color: #55555c; }
+.kitchen-page.is-tv .kanban { flex: 1; min-height: 0; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; padding: 10px; overflow: hidden; align-items: stretch; scroll-snap-type: none; }
+.kitchen-page.is-tv .k-col { min-height: 0; }
+.kitchen-page.is-tv .k-col > header { padding: 12px 14px 10px; }
+.kitchen-page.is-tv .k-col h2 { font-size: 20px; }
+.kitchen-page.is-tv .k-count { font-size: 18px; min-width: 32px; }
+.kitchen-page.is-tv .k-list { overflow-y: auto; align-content: start; gap: 10px; padding: 0 10px 12px; }
+.kitchen-page.is-tv .k-card-body { padding: 12px 14px; gap: 8px; }
+.kitchen-page.is-tv .k-ticket { font-size: 34px; line-height: 1; }
+.kitchen-page.is-tv .k-time, .kitchen-page.is-tv .k-elapsed { font-size: 15px; }
+.kitchen-page.is-tv .k-buyer { font-size: 18px; }
+.kitchen-page.is-tv .k-buyer span { font-size: 14px; }
+.kitchen-page.is-tv .order-items.compact li { font-size: 19px; grid-template-columns: 40px 1fr; }
+.kitchen-page.is-tv .order-items.compact small { font-size: 15px; }
+.kitchen-page.is-tv .k-counter { font-size: 14px; }
+.kitchen-page.is-tv .k-number { display: none; }
+.kitchen-page.is-tv .k-card footer .btn { font-size: 15px; padding-block: 8px; }
+@media (max-width: 900px) {
+  .kitchen-page.is-tv .kanban { grid-template-columns: repeat(4, min(80vw, 320px)); overflow-x: auto; }
+}

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ArrowRight, Bell, BellOff, Clock3, MapPin, Printer, RotateCcw, Search } from 'lucide-react';
+import { AlertTriangle, ArrowRight, Bell, BellOff, Clock3, MapPin, Printer, RotateCcw, Search, Tv } from 'lucide-react';
 import { ErrorState, Spinner, useNow } from '../components/ui.jsx';
 import { elapsed, time } from '../lib/api.js';
 import { beep } from '../lib/beep.js';
@@ -141,7 +141,29 @@ export default function KitchenPage() {
   };
   const set = (key) => (event) => setFilters((current) => ({ ...current, [key]: event.target.value }));
 
-  return <div className="admin-page kitchen-page">
+  // Modo TV: quadro em tela cheia para a TV da cozinha (sem menu e filtros, letras maiores, sem "Finalizados").
+  const [tv, setTv] = useState(() => readJson('eag-kitchen-tv', false));
+  const toggleTv = () => {
+    const value = !tv;
+    setTv(value); writeJson('eag-kitchen-tv', value);
+    if (value) document.documentElement.requestFullscreen?.().catch(() => {});
+    else if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+  };
+  useEffect(() => {
+    document.body.classList.toggle('kitchen-tv', tv);
+    return () => document.body.classList.remove('kitchen-tv');
+  }, [tv]);
+  const clock = new Date(now).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  const steps = tv ? PRODUCTION_STEPS.filter((step) => step !== 'finalized') : PRODUCTION_STEPS;
+
+  return <div className={`admin-page kitchen-page ${tv ? 'is-tv' : ''}`}>
+    {tv && <header className="k-tv-bar">
+      <b>Cozinha</b>
+      <span className="k-tv-counts">{steps.map((step) => <span key={step}>{PRODUCTION_LABELS[step]} <b>{columns[step]?.length ?? 0}</b></span>)}</span>
+      <time>{clock}</time>
+      <button type="button" className="btn btn-outline btn-sm" onClick={toggleSound}>{sound ? <Bell size={15} /> : <BellOff size={15} />} Som</button>
+      <button type="button" className="btn btn-outline btn-sm" onClick={toggleTv}>Sair do modo TV</button>
+    </header>}
     <header className="admin-page-head">
       <div><h1>Cozinha / Produção</h1><p>Pedidos da lanchonete, do mais antigo para o mais novo em cada etapa.</p></div>
       <div className="head-actions">
@@ -150,6 +172,7 @@ export default function KitchenPage() {
         <button type="button" className="btn btn-outline btn-sm" onClick={toggleAutoPrint} title="Imprime a comanda de cada pedido novo neste aparelho">
           <Printer size={15} /> Imprimir novos: {autoPrint ? 'sim' : 'não'}</button>
         <button type="button" className="btn btn-outline btn-sm" onClick={toggleSound} title="Aviso sonoro de novo pedido">{sound ? <Bell size={15} /> : <BellOff size={15} />} Som {sound ? 'ligado' : 'desligado'}</button>
+        <button type="button" className="btn btn-primary btn-sm" onClick={toggleTv} title="Tela cheia para a TV da cozinha"><Tv size={15} /> Modo TV</button>
       </div>
     </header>
 
@@ -171,7 +194,7 @@ export default function KitchenPage() {
           {PRODUCTION_LABELS[step]} <b>{columns[step].length}</b></button>)}
       </nav>
       <div className="kanban" ref={columnsRef}>
-        {PRODUCTION_STEPS.map((step) => {
+        {steps.map((step) => {
           const list = step === 'finalized' && !showAllDone ? columns[step].slice(0, 20) : columns[step];
           return <section key={step} data-step={step} className={`k-col k-col-${step} ${dragOver === step ? 'drag-over' : ''}`}
             onDragOver={(event) => { event.preventDefault(); setDragOver(step); }} onDragLeave={() => setDragOver(null)} onDrop={onDrop(step)}>
