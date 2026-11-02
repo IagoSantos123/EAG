@@ -6,7 +6,11 @@
     "dev": "concurrently -n api,web -c yellow,cyan \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
     "build": "npm run build --prefix client",
     "start": "npm run start --prefix server",
-    "test": "npm test --prefix server"
+    "test": "npm test --prefix server",
+    "local": "npm run build --prefix client && npm run local --prefix server",
+    "importar": "npm run importar --prefix server",
+    "lancar-nuvem": "npm run lancar-nuvem --prefix server",
+    "local-teste": "npm run build --prefix client && npm run local-teste --prefix server"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

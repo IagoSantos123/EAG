@@ -362,6 +362,49 @@ const MIGRATIONS = [
         CREATE UNIQUE INDEX IF NOT EXISTS orders_mp_payment_idx ON orders(mp_payment_id) WHERE mp_payment_id IS NOT NULL;
       `);
     }
+  },
+  {
+    // Ajustes do 2º dia do evento: equipes duplicadas por grafia e sabores da mini pizza.
+    id: '2026-11-006-equipes-e-sabores',
+    async run(client) {
+      // "`Projeção" e "Progeççao" eram a mesma "Estrutura e Projeção": os pedidos passam para a equipe certa.
+      const target = (await client.query("SELECT id FROM teams WHERE name='Estrutura e Projeção'")).rows[0];
+      if (target) {
+        const dupes = (await client.query("SELECT id, name FROM teams WHERE name IN ('`Projeção', 'Progeççao')")).rows;
+        for (const dupe of dupes) {
+          await client.query("UPDATE orders SET team_id=$1, team_name='Estrutura e Projeção' WHERE team_id=$2 OR team_name=$3", [target.id, dupe.id, dupe.name]);
+          await client.query('DELETE FROM teams WHERE id=$1', [dupe.id]);
+        }
+      }
+      // Mini pizza (e o combo Big-Graças, que leva mini pizza): escolha obrigatória do sabor.
+      const sabor = { name: 'Sabor', min: 1, max: 1, required: true,
+        options: ['Calabresa', 'Mista', 'Frango'].map((name) => ({ name, extraCents: 0, available: true })) };
+      const products = (await client.query("SELECT id, option_groups FROM products WHERE mode='snack' AND name IN ('Mini pizza', 'Big-Graças')")).rows;
+      for (const product of products) {
+        const groups = Array.isArray(product.option_groups) ? product.option_groups : [];
+        if (groups.some((group) => group.name === 'Sabor')) continue;
+        await client.query('UPDATE products SET option_groups=$1, updated_at=NOW() WHERE id=$2', [JSON.stringify([sabor, ...groups]), product.id]);
+      }
+    }
+  },
+  {
+    // Itens que saem prontos do balcão (salgados, cafés, bebidas, doces): não vão para a tela da cozinha.
+    id: '2026-11-007-itens-do-balcao',
+    async run(client) {
+      await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS kitchen BOOLEAN NOT NULL DEFAULT TRUE');
+      // Nomes exatos: no banco local (locale C) o LOWER() não converte letras acentuadas ("Água").
+      await client.query(`UPDATE products SET kitchen=FALSE, updated_at=NOW() WHERE mode='snack' AND name = ANY($1)`, [[
+        'Salgado', 'Torta', 'Dindim gourmet', 'Café (copo)', 'Café com leite', 'Cápsula 3 Corações', 'Chocolate quente',
+        'Refrigerante 250 ml', 'Suco (copo)', 'Água 500 ml', 'Água com gás', 'Pipoca Karintó', 'JUJUBA', 'PASTILHA', 'BALA IORGUTE', 'Tirinete'
+      ]]);
+    }
+  },
+  {
+    // Observação geral da comanda (ex.: "anotado no papel em 31/10"), além das observações de cada item.
+    id: '2026-11-008-observacao-da-comanda',
+    async run(client) {
+      await client.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS order_note TEXT NOT NULL DEFAULT ''");
+    }
   }
 ];
 

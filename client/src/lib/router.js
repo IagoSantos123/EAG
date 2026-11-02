@@ -16,6 +16,7 @@ function parse(hash) {
   if (first === 'meus-pedidos') return { name: 'myOrders', params: {} };
   if (first === 'consultar') return { name: 'lookup', params: {} };
   if (first === 'admin') return { name: 'admin', params: { tab: second || '' } };
+  if (first === 'painel') return { name: 'painel', params: {} };
   return { name: 'home', params: {} };
 }
 
@@ -38,5 +39,6 @@ export const paths = {
   tracking: (token) => `#pedido/${token}`,
   myOrders: '#/meus-pedidos',
   lookup: '#/consultar',
-  admin: (tab = '') => `#/admin${tab ? `/${tab}` : ''}`
+  admin: (tab = '') => `#/admin${tab ? `/${tab}` : ''}`,
+  painel: '#/painel'
 };

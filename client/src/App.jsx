@@ -29,7 +29,9 @@ function Shop({ route }) {
   switch (route.name) {
     case 'catalog': page = <Catalog key={mode} mode={mode} cart={cart} config={config} />; break;
     case 'cart': page = <CartPage mode={mode} cart={cart} />; break;
-    case 'checkout': page = config ? <CheckoutPage mode={mode} cart={cart} config={config} />
+    case 'checkout': page = config?.sitePaused
+      ? <main className="page page-narrow"><p className="alert alert-warning">Os pedidos pelo site estão pausados. <b>Faça seu pedido no balcão.</b></p></main>
+      : config ? <CheckoutPage mode={mode} cart={cart} config={config} />
       : <main className="page page-narrow"><p className="alert alert-warning">{configError ? 'Sem conexão com o servidor. Tentando novamente...' : 'Carregando...'}</p></main>; break;
     case 'tracking': page = <Tracking token={route.params.token} />; break;
     case 'myOrders': page = <MyOrders />; break;
@@ -39,6 +41,7 @@ function Shop({ route }) {
   return <div className="shop">
     <ShopHeader route={route} mode={mode || 'snack'} count={cart.count(mode || 'snack')} />
     {configError && route.name === 'home' && <p className="alert alert-warning page-alert">Não foi possível conectar ao servidor. Verifique a internet; tentaremos novamente.</p>}
+    {config?.sitePaused && <p className="alert alert-warning page-alert">Os pedidos pelo site estão pausados no momento. <b>Faça seu pedido no balcão da lanchonete.</b></p>}
     {page}
     <ShopFooter contactPhone={config?.contactPhone} />
   </div>;
@@ -53,10 +56,10 @@ function SiteFechado() {
         <img src="/brand/la-em-gracas-lanches.png" alt="Lá em Graças Lanches" />
         <img src="/brand/eag-gracas.png" alt="EAG — Encontro de Adolescentes Graças" />
       </div>
-      <h1>Pedidos só no balcão</h1>
-      <p>Durante o encontro, os pedidos da lanchonete e dos artigos religiosos são feitos <b>presencialmente</b>.</p>
-      <p>Vá até o balcão da <b>Lá em Graças Lanches</b>, faça seu pedido e acompanhe sua senha na TV do salão.</p>
-      <small>Pagamento no balcão: PIX, dinheiro ou cartão.</small>
+      <h1>O encontro terminou</h1>
+      <p>Obrigado a todos que passaram pela <b>Lá em Graças Lanches</b> no EAG. Os pedidos pelo site estão encerrados.</p>
+      <p>Ficou algum fiado em aberto? Fale com a coordenação da sua equipe para acertar.</p>
+      <small>Até o próximo encontro!</small>
     </div>
   </main>;
 }

@@ -62,6 +62,36 @@ Na primeira inicialização o servidor cria/atualiza as tabelas (migrações ver
 - Na Vercel não há conexão persistente: as telas se atualizam sozinhas a cada ~8 segundos. Rodando com `npm start` em servidor próprio, a atualização é instantânea (SSE).
 - Deploy: `vercel deploy --prod`.
 
+## Modo local no evento (sem internet)
+
+O sistema roda num notebook do salão, e os outros aparelhos usam pela rede Wi-Fi da sala. Não precisa de internet: o banco (PostgreSQL embutido), a API e as telas ficam todos nesse notebook, e a atualização entre balcão, cozinha e TV é instantânea.
+
+**Montagem**
+- **Notebook do salão (servidor):** roda `iniciar-local.bat`, vende pela Venda no balcão e liga a TV pelo HDMI (segunda tela) com o painel de senhas.
+- **Notebook da cozinha:** abre no navegador o endereço que o servidor mostra (ex.: `http://192.168.43.10:3001`) e fica na tela Cozinha / Produção, com o som ligado.
+- **Rede:** o roteador Wi-Fi (hotspot) de um celular entre as duas salas. Os dois notebooks entram nele. Funciona mesmo com o celular sem dados móveis. Também serve um roteador comum, sem internet.
+
+**Antes do evento (com internet, uma vez)**
+1. No notebook do salão: instalar o Node 22 e clonar este repositório.
+2. Copiar `server/.env.local.example` para `server/.env.local` e preencher o administrador e a chave PIX.
+3. Rodar `iniciar-local.bat` uma vez (instala tudo e prepara o banco) e fechar com Ctrl+C.
+4. `npm run importar`: pede o e-mail e a senha do admin da nuvem e traz categorias, produtos, equipes e configurações do `eag-final.vercel.app`. Pode repetir sem duplicar, mas o estoque local passa a ser o da nuvem: não rode durante o evento.
+5. Em Configurações → PIX, enviar a imagem do QR Code fixo.
+6. Ensaiar com os dois notebooks no hotspot do celular.
+
+**No dia**
+1. Ligar o hotspot do celular e conectar os dois notebooks.
+2. No notebook do salão: `iniciar-local.bat`. A janela mostra os endereços e precisa ficar aberta. Na primeira vez, o Windows pergunta sobre o firewall: permitir em **rede privada**. Sem isso, a cozinha não consegue abrir o endereço.
+3. TV: abrir `http://localhost:3001/#/painel` numa janela arrastada para a TV, tocar em "Ativar som" e dar dois cliques para a tela cheia.
+4. Cozinha: abrir o endereço da rede, entrar com o login de cozinha e ir em Cozinha / Produção.
+5. Na nuvem (`eag-final.vercel.app`), ligar Configurações → Atendimento → **Pausar pedidos pelo site**, para ninguém pedir por lá.
+
+**PIX no balcão:** na Venda no balcão, toque em **PIX** (o QR aparece na tela), confira o recebimento no celular e conclua. Assim o caixa fecha certo: PIX como PIX, não como dinheiro.
+
+**Comanda impressa:** com a impressora térmica de 80 mm instalada como impressora padrão no aparelho em que está ligada, use o ícone de impressora no cartão do pedido ou ligue "Imprimir novos: sim" na cozinha. Para não abrir a janela de impressão a cada pedido, abra o Chrome por um atalho com `--kiosk-printing` no final do destino (ex.: `"C:\Program Files\Google\Chrome\Application\chrome.exe" --kiosk-printing http://192.168.43.10:3001/#/admin/cozinha`).
+
+**Dados:** ficam em `.dados-local/` (fora do git). Pedidos e caixa do evento ficam só neste notebook: o relatório e o CSV saem pelo Financeiro. Para recomeçar do zero, apague essa pasta com o sistema fechado.
+
 ## Imagens
 
 - Logos oficiais em `client/public/brand/` (extraídas das imagens fornecidas; resolução baixa — substitua pelos arquivos originais em alta quando possível).

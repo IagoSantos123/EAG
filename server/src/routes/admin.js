@@ -46,6 +46,8 @@ const productSchema = z.object({
   adminNotes: z.string().trim().max(1000).default(''),
   needsReview: z.boolean().default(false),
   sortOrder: z.number().int().min(0).max(10000).default(0),
+  // Falso para itens que saem prontos do balcão (não aparecem na tela da cozinha).
+  kitchen: z.boolean().default(true),
   optionGroups: z.array(optionGroupSchema).max(10, 'Máximo de 10 grupos de opções.').default([])
 }).superRefine((product, ctx) => {
   const names = product.optionGroups.map((group) => group.name.toLowerCase());
@@ -62,7 +64,7 @@ function serializeProduct(p) {
     id: p.id, name: p.name, description: p.description || '', mode: p.mode, categoryId: p.category_id, category: p.category_name || '',
     price: toMoney(p.price_cents), available: p.available, archived: p.archived, imageUrl: p.image_url || '', stock: p.stock,
     prepMinutes: p.prep_minutes, allowNotes: p.allow_notes, customTextLabel: p.custom_text_label, customTextRequired: p.custom_text_required,
-    adminNotes: p.admin_notes, needsReview: p.needs_review, sortOrder: p.sort_order, updatedAt: p.updated_at,
+    adminNotes: p.admin_notes, needsReview: p.needs_review, sortOrder: p.sort_order, kitchen: p.kitchen !== false, updatedAt: p.updated_at,
     optionGroups: (p.option_groups || []).map((group) => ({
       name: group.name, min: Number(group.min ?? (group.required ? 1 : 0)), max: Number(group.max ?? 1),
       options: (group.options || []).map((option) => ({ name: option.name, extra: toMoney(optionExtraCents(option)), available: option.available !== false }))
@@ -89,10 +91,10 @@ router.post('/products', auth('catalog.manage'), asyncRoute(async (req, res) => 
     const duplicate = await db.query('SELECT 1 FROM products WHERE mode=$1 AND LOWER(name)=LOWER($2) AND archived=FALSE', [p.mode, p.name]);
     if (duplicate.rowCount) throw new HttpError(409, 'Já existe um produto com este nome neste catálogo.');
     const { rows } = await db.query(`INSERT INTO products(name,description,mode,category_id,price_cents,available,image_url,stock,prep_minutes,option_groups,
-        allow_notes,custom_text_label,custom_text_required,admin_notes,needs_review,sort_order)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id`,
+        allow_notes,custom_text_label,custom_text_required,admin_notes,needs_review,sort_order,kitchen)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING id`,
     [p.name, p.description, p.mode, p.categoryId, toCents(p.price), p.available, p.imageUrl, p.stock, p.prepMinutes, JSON.stringify(storedGroups(p.optionGroups)),
-      p.allowNotes, p.customTextLabel, p.customTextRequired && Boolean(p.customTextLabel), p.adminNotes, p.needsReview, p.sortOrder]);
+      p.allowNotes, p.customTextLabel, p.customTextRequired && Boolean(p.customTextLabel), p.adminNotes, p.needsReview, p.sortOrder, p.kitchen]);
     await audit(db, req.user, 'product.create', 'product', rows[0].id, { name: p.name, price: p.price });
     return rows[0].id;
   });
@@ -110,10 +112,10 @@ router.put('/products/:id', auth('catalog.manage'), asyncRoute(async (req, res) 
     const duplicate = await db.query('SELECT 1 FROM products WHERE mode=$1 AND LOWER(name)=LOWER($2) AND archived=FALSE AND id<>$3', [p.mode, p.name, id]);
     if (duplicate.rowCount) throw new HttpError(409, 'Já existe outro produto com este nome neste catálogo.');
     await db.query(`UPDATE products SET name=$1,description=$2,mode=$3,category_id=$4,price_cents=$5,available=$6,image_url=$7,stock=$8,prep_minutes=$9,
-        option_groups=$10,allow_notes=$11,custom_text_label=$12,custom_text_required=$13,admin_notes=$14,needs_review=$15,sort_order=$16,updated_at=NOW()
+        option_groups=$10,allow_notes=$11,custom_text_label=$12,custom_text_required=$13,admin_notes=$14,needs_review=$15,sort_order=$16,kitchen=$18,updated_at=NOW()
       WHERE id=$17`,
     [p.name, p.description, p.mode, p.categoryId, toCents(p.price), p.available, p.imageUrl, p.stock, p.prepMinutes, JSON.stringify(storedGroups(p.optionGroups)),
-      p.allowNotes, p.customTextLabel, p.customTextRequired && Boolean(p.customTextLabel), p.adminNotes, p.needsReview, p.sortOrder, id]);
+      p.allowNotes, p.customTextLabel, p.customTextRequired && Boolean(p.customTextLabel), p.adminNotes, p.needsReview, p.sortOrder, id, p.kitchen]);
     const old = before.rows[0];
     await audit(db, req.user, 'product.update', 'product', id, {
       name: p.name,
@@ -191,8 +193,37 @@ router.patch('/categories/:id', auth('catalog.manage'), asyncRoute(async (req, r
 router.get('/teams', auth('settings.manage'), asyncRoute(async (_req, res) => {
   const { rows } = await pool.query('SELECT * FROM teams ORDER BY name'); res.json(rows);
 }));
+// Palavras do nome sem acento, maiúsculas, símbolos, conectivos ("e", "de"...) e plural, para comparar equipes.
+const teamWords = (name) => name.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ')
+  .split(' ').filter((word) => word.length > 2).map((word) => (word.length > 4 ? word.replace(/s$/, '') : word));
+
+// Mesma palavra, tolerando erro de digitação: 1 letra diferente em palavras médias; 2 nas longas que começam igual
+// ("progeccao" x "projecao" sim; "recepcao" x "refeicao" não).
+function sameWord(a, b) {
+  if (a === b) return true;
+  const shortest = Math.min(a.length, b.length);
+  const limit = shortest >= 7 && a.slice(0, 3) === b.slice(0, 3) ? 2 : shortest >= 5 ? 1 : 0;
+  if (!limit || Math.abs(a.length - b.length) > limit) return false;
+  let previous = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const row = [i];
+    for (let j = 1; j <= b.length; j++) row[j] = Math.min(previous[j] + 1, row[j - 1] + 1, previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    previous = row;
+  }
+  return previous[b.length] <= limit;
+}
+
 router.post('/teams', auth('settings.manage'), asyncRoute(async (req, res) => {
   const input = parse(z.object({ name: z.string().trim().min(2, 'Nome de equipe muito curto.').max(100), description: z.string().max(300).default('') }), req.body, 'Nome de equipe inválido.');
+  // Evita equipes duplicadas com grafia diferente ("`Projeção" x "Estrutura e Projeção", "Animacao" x "Animação").
+  const words = teamWords(input.name);
+  const similar = (await pool.query('SELECT name FROM teams')).rows.find((team) => {
+    const other = teamWords(team.name);
+    // Igual, ou todas as palavras de um nome aparecem no outro (palavras inteiras: "Oração" não colide com "Decoração").
+    const within = (a, b) => a.every((w) => b.some((x) => sameWord(w, x)));
+    return words.length && other.length && (within(words, other) || within(other, words));
+  });
+  if (similar) return fail(res, 409, `Já existe a equipe "${similar.name}". Use essa (se estiver inativa, ative-a).`);
   try {
     const result = await pool.query('INSERT INTO teams(name,description) VALUES($1,$2) RETURNING id', [input.name, input.description]);
     await audit(pool, req.user, 'team.create', 'team', result.rows[0].id, input);
@@ -213,7 +244,9 @@ router.patch('/teams/:id', auth('settings.manage'), asyncRoute(async (req, res) 
 const settingsSchemas = {
   pix: z.object({
     key: z.string().trim().max(250), type: z.string().trim().max(60), beneficiary: z.string().trim().max(120),
-    city: z.string().trim().max(80), instructions: z.string().trim().max(1000)
+    city: z.string().trim().max(80), instructions: z.string().trim().max(1000),
+    // Imagem do QR Code fixo (enviada como as fotos de produto), mostrada no balcão e no painel da TV.
+    qr_image: z.string().trim().max(200).regex(/^(\/api\/images\/\d+)?$/, 'Imagem do QR inválida.').default('')
   }),
   payment_deadline_minutes: z.number().int().min(5, 'Prazo mínimo: 5 minutos.').max(120, 'Prazo máximo: 120 minutos.'),
   payment_methods: z.object({ cash: z.boolean(), debit: z.boolean(), credit: z.boolean(), fiado_self: z.boolean().default(false) }),
@@ -221,7 +254,9 @@ const settingsSchemas = {
     dine_in: z.boolean(), delivery: z.boolean(), pickup: z.boolean(),
     delivery_fee: z.number().min(0, 'Taxa de entrega inválida.').max(1000),
     tables_enabled: z.boolean(), table_count: z.number().int().min(0).max(500),
-    delivery_instructions: z.string().trim().max(500), pickup_instructions: z.string().trim().max(500), dine_in_instructions: z.string().trim().max(500)
+    delivery_instructions: z.string().trim().max(500), pickup_instructions: z.string().trim().max(500), dine_in_instructions: z.string().trim().max(500),
+    // Evento rodando no modo local: o site da nuvem para de aceitar pedidos e pede para ir ao balcão.
+    site_paused: z.boolean().default(false)
   }).refine((s) => s.dine_in || s.delivery || s.pickup, 'Mantenha pelo menos uma modalidade de atendimento ativa.'),
   kitchen: z.object({ require_pix_confirmation: z.boolean() }),
   contact: z.object({ phone: z.string().trim().max(40) })

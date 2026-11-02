@@ -23,6 +23,10 @@ const baseFields = {
   cashChangeFor: z.number().min(0).max(10000).nullable().default(null),
   items: z.array(z.object({
     productId: z.coerce.number().int().positive(),
+    // Catálogo do item (balcão): uma comanda pode ter lanchonete e artigos juntos.
+    mode: z.enum(['religious', 'snack']).optional(),
+    // Preço da unidade ajustado na comanda (promoção, valor especial). Só vale em vendas da equipe.
+    priceOverride: z.number().min(0, 'Preço inválido.').max(10000, 'Preço inválido.').nullable().optional(),
     quantity: z.number().int().min(1).max(30, 'Quantidade máxima por item: 30.'),
     selectedOptions: z.array(z.object({ group: z.string().max(80), option: z.string().max(80) })).max(40).default([]),
     note: z.string().max(300, 'Observação muito longa (máximo 300 caracteres).').default(''),
@@ -41,6 +45,7 @@ export const publicOrderSchema = z.object({
 // Balcão: telefone opcional, exceto para fiado e delivery (validado em validateOrder).
 export const staffOrderSchema = z.object({
   ...baseFields,
+  orderNote: z.string().trim().max(300, 'Observação da comanda muito longa (máximo 300 caracteres).').default(''),
   buyerPhone: z.string().trim().max(30).default('').refine((value) => !value || validPhone(value), 'Telefone inválido: informe com DDD.')
 });
 
@@ -80,7 +85,7 @@ export function validateOrder(input, settings, { staff = false } = {}) {
 }
 
 // Insere o pedido (preço sempre recalculado pelo cadastro). Deve rodar dentro de transação.
-export async function insertOrder(db, input, settings, { paymentMethod, onCredit = false, actor, deliveryFeeCents, tableNumber }) {
+export async function insertOrder(db, input, settings, { paymentMethod, onCredit = false, actor, deliveryFeeCents, tableNumber, ticket: fixedTicket }) {
   let teamName = 'Sem equipe';
   if (input.teamId) {
     const team = await db.query('SELECT name FROM teams WHERE id=$1 AND active=TRUE', [input.teamId]);
@@ -96,6 +101,11 @@ export async function insertOrder(db, input, settings, { paymentMethod, onCredit
     const product = found.rows[0];
     if (product.stock !== null && product.stock < item.quantity) throw new HttpError(409, `${product.name}: estoque insuficiente (restam ${product.stock}).`);
     const priced = priceItem(product, item);
+    if (actor && item.priceOverride != null && toCents(item.priceOverride) !== priced.unitCents) {
+      priced.priceAdjustedFromCents = priced.unitCents;
+      priced.unitCents = toCents(item.priceOverride);
+      priced.totalCents = priced.unitCents * priced.quantity;
+    }
     subtotal += priced.totalCents;
     snapshot.push(priced);
     if (product.stock !== null) await db.query('UPDATE products SET stock=stock-$1,updated_at=NOW() WHERE id=$2', [item.quantity, product.id]);
@@ -108,7 +118,8 @@ export async function insertOrder(db, input, settings, { paymentMethod, onCredit
   }
   // Senha curta do dia, sequencial, para chamar o cliente no balcão.
   await db.query('SELECT pg_advisory_xact_lock(727002)');
-  const ticket = await db.query(`SELECT COALESCE(MAX(ticket_number),0)+1 AS next FROM orders
+  // Comanda mista: a parte dos artigos usa a mesma senha da parte da lanchonete.
+  const ticket = fixedTicket ? { rows: [{ next: fixedTicket }] } : await db.query(`SELECT COALESCE(MAX(ticket_number),0)+1 AS next FROM orders
     WHERE (created_at AT TIME ZONE $1)::date = (NOW() AT TIME ZONE $1)::date`, [TIMEZONE]);
   const orderNumber = `AG-${localDate().slice(2).replaceAll('-', '')}-${randomBytes(3).toString('hex').toUpperCase()}`;
   const publicToken = randomBytes(24).toString('base64url');
@@ -117,15 +128,26 @@ export async function insertOrder(db, input, settings, { paymentMethod, onCredit
   const { rows } = await db.query(`INSERT INTO orders(order_number,public_token,buyer_name,buyer_phone,team_id,team_name,mode,items,
       subtotal_cents,total_cents,delivery_fee_cents,expires_at,status,payment_status,production_status,service_type,payment_method,
       delivery_address,delivery_reference,delivery_note,table_number,cash_change_for_cents,ticket_number,client_request_id,
-      on_credit,credit_at,credit_by_name,source)
+      on_credit,credit_at,credit_by_name,source,order_note)
     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,CASE WHEN $12='pix' AND $22='site' THEN NOW()+($13 * INTERVAL '1 minute') END,'active','awaiting_payment','new',
-      $14,$12,$15,$16,$17,$18,$19,$20,$21,$23,CASE WHEN $23 THEN NOW() END,CASE WHEN $23 THEN $24 END,$22) RETURNING *`,
+      $14,$12,$15,$16,$17,$18,$19,$20,$21,$23,CASE WHEN $23 THEN NOW() END,CASE WHEN $23 THEN $24 END,$22,$25) RETURNING *`,
   [orderNumber, publicToken, input.buyerName, input.buyerPhone || '', input.teamId, teamName, input.mode, JSON.stringify(snapshot),
     subtotal, total, deliveryFeeCents, paymentMethod, deadline, input.serviceType,
     delivery ? input.deliveryAddress : '', delivery ? input.deliveryReference : '', delivery ? input.deliveryNote : '',
-    tableNumber, cashChangeFor, ticket.rows[0].next, input.clientRequestId || null, actor ? 'balcao' : 'site', onCredit, actor?.name || 'Comprador']);
-  const order = rows[0];
+    tableNumber, cashChangeFor, ticket.rows[0].next, input.clientRequestId || null, actor ? 'balcao' : 'site', onCredit, actor?.name || 'Comprador', actor ? input.orderNote || '' : '']);
+  let order = rows[0];
   await addHistory(db, { orderId: order.id, kind: 'order', status: 'created', note: actor ? 'Venda registrada no balcão' : 'Pedido criado pelo site', actor: actor || { name: 'Comprador' } });
+  const adjusted = snapshot.filter((item) => item.priceAdjustedFromCents != null);
+  if (adjusted.length) {
+    const money = (cents) => toMoney(cents).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+    await addHistory(db, { orderId: order.id, kind: 'order', status: 'price_adjusted', actor,
+      note: `Preço ajustado na comanda: ${adjusted.map((item) => `${item.name} ${money(item.priceAdjustedFromCents)} → ${money(item.unitCents)}`).join('; ')}` });
+  }
+  // Lanchonete só com itens do balcão (salgado, café, bebida...): não passa pela cozinha, já nasce pronto para entregar.
+  if (input.mode === 'snack' && snapshot.every((item) => item.kitchen === false)) {
+    order = (await db.query("UPDATE orders SET production_status='ready', ready_at=NOW() WHERE id=$1 RETURNING *", [order.id])).rows[0];
+    await addHistory(db, { orderId: order.id, kind: 'production', status: 'ready', fromStatus: 'new', note: 'Pronto no balcão (sem itens de cozinha)', actor: actor || { name: 'Sistema' } });
+  }
   if (onCredit) await addHistory(db, { orderId: order.id, kind: 'payment', status: 'credit', note: 'Lançado como fiado', actor: actor || { name: 'Comprador' } });
   return order;
 }

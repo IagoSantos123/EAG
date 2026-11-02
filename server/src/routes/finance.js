@@ -13,9 +13,9 @@ import { asyncRoute, fail, parse, toId, toCents, toMoney, withTransaction, HttpE
 import { readPeriod, periodSql, TIMEZONE } from '../lib/time.js';
 import {
   PAYMENT_METHODS, PAYMENT_METHOD_LABELS, SERVICE_TYPES,
-  addHistory, recomputePayment, requireOpenSession, serializeOrder, audit
+  addHistory, recomputePayment, requireOpenSession, serializeOrder, audit, balanceCents
 } from '../lib/orders.js';
-import { paymentLinesSchema, registerPayments, markCredit } from '../lib/payments.js';
+import { paymentLinesSchema, registerPayments, markCredit, splitPaymentLines } from '../lib/payments.js';
 import { publish } from '../lib/events.js';
 
 const router = Router();
@@ -166,6 +166,61 @@ router.post('/orders/:id/credit', auth('credits.manage'), asyncRoute(async (req,
   res.json({ ok: true });
 }));
 
+// Cobrança de uma pessoa: dá baixa em várias comandas fiadas de uma vez, repartindo as formas de pagamento
+// entre elas (na ordem). Tudo ou nada: se uma comanda já tiver sido paga por outra pessoa, nada é gravado.
+const settleSchema = z.object({
+  orderIds: z.array(z.number().int().positive()).min(1, 'Marque ao menos uma comanda.').max(60),
+  idempotencyKey: z.string().uuid(),
+  note: z.string().trim().max(300).default(''),
+  lines: paymentLinesSchema
+});
+
+router.post('/credits/settle', auth('payments.register'), asyncRoute(async (req, res) => {
+  const input = parse(settleSchema, req.body, 'Confira as comandas e os valores do recebimento.');
+  if (input.lines.some((line) => line.method === 'fiado')) throw new HttpError(400, 'Na cobrança de fiado, use só formas de pagamento (PIX, dinheiro, cartão).');
+  const settings = await readSettings();
+  const ids = [...new Set(input.orderIds)];
+  const result = await withTransaction(pool, async (db) => {
+    const { rows } = await db.query('SELECT * FROM orders WHERE id = ANY($1) ORDER BY created_at, id FOR UPDATE', [ids]);
+    if (rows.length !== ids.length) throw new HttpError(404, 'Alguma comanda não foi encontrada. Atualize a tela.');
+    const stale = rows.find((order) => !order.on_credit || order.status !== 'active' || balanceCents(order) <= 0);
+    if (stale) throw new HttpError(409, `A comanda #${stale.ticket_number ?? ''} (${stale.buyer_name}) não está mais em aberto no fiado. Atualize a tela.`);
+    const split = splitPaymentLines(input.lines, rows.map((order) => balanceCents(order)));
+    const note = [input.note, ids.length > 1 ? `Baixa conjunta de ${ids.length} fiados` : ''].filter(Boolean).join(' · ');
+    let change = 0;
+    for (const [index, order] of rows.entries()) {
+      const paid = await registerPayments(db, { orderId: order.id, lines: split[index], idempotencyKey: index ? `${input.idempotencyKey}-${index}` : input.idempotencyKey,
+        actor: req.user, settings, note });
+      if (paid.duplicate) return { duplicate: true };
+      change += paid.change || 0;
+    }
+    return { change, count: rows.length, total: rows.reduce((sum, order) => sum + balanceCents(order), 0) };
+  });
+  for (const id of ids) { publish('payment', { orderId: id }); publish('order', { orderId: id }); }
+  if (result.duplicate) return res.json({ ok: true, duplicate: true });
+  res.status(201).json({ ok: true, count: result.count, total: toMoney(result.total), change: toMoney(result.change) });
+}));
+
+// Junta grafias diferentes da mesma pessoa ("Julio", "Júlio César"): todas as comandas passam a ter o mesmo nome.
+router.post('/credits/rename', auth('credits.manage'), asyncRoute(async (req, res) => {
+  const input = parse(z.object({
+    orderIds: z.array(z.number().int().positive()).min(1, 'Escolha as comandas.').max(300),
+    buyerName: z.string().trim().min(2, 'Informe o nome.').max(120, 'Nome muito longo.')
+  }), req.body);
+  const changed = await withTransaction(pool, async (db) => {
+    const { rows } = await db.query('SELECT id, buyer_name FROM orders WHERE id = ANY($1) FOR UPDATE', [input.orderIds]);
+    if (rows.length !== input.orderIds.length) throw new HttpError(404, 'Alguma comanda não foi encontrada.');
+    const targets = rows.filter((row) => row.buyer_name !== input.buyerName);
+    for (const row of targets) {
+      await db.query('UPDATE orders SET buyer_name=$1, updated_at=NOW() WHERE id=$2', [input.buyerName, row.id]);
+      await addHistory(db, { orderId: row.id, kind: 'order', status: 'customer_updated', note: `Nome unificado: ${row.buyer_name} → ${input.buyerName}`, actor: req.user });
+    }
+    return targets.length;
+  });
+  for (const id of input.orderIds) publish('order', { orderId: id });
+  res.json({ ok: true, changed });
+}));
+
 router.get('/credits', auth('credits.view'), asyncRoute(async (req, res) => {
   const settled = req.query.status === 'settled';
   const { rows } = await pool.query(settled
@@ -175,7 +230,8 @@ router.get('/credits', auth('credits.view'), asyncRoute(async (req, res) => {
   const open = settled ? null : {
     count: orders.length,
     total: orders.reduce((sum, o) => sum + o.balance, 0),
-    customers: new Set(orders.map((o) => o.buyerPhone.replace(/\D/g, '') || o.buyerName.toLowerCase())).size
+    // Pelo nome: vários fiados têm o telefone de enchimento (00) 00000-0000.
+    customers: new Set(orders.map((o) => o.buyerName.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim())).size
   };
   res.json({ orders, summary: open });
 }));

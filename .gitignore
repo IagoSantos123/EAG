@@ -4,3 +4,6 @@ node_modules/
 !.env.example
 .vercel/
 dist/
+!.env.local.example
+.dados-local/
+.dados-teste/

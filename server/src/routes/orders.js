@@ -3,7 +3,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { pool, readSettings } from '../db.js';
 import { auth, can } from '../lib/auth.js';
-import { markCredit, registerPayments, paymentLinesSchema } from '../lib/payments.js';
+import { markCredit, registerPayments, paymentLinesSchema, splitPaymentLines } from '../lib/payments.js';
 import { staffOrderSchema, validateOrder, insertOrder } from '../lib/create-order.js';
 import { expireDueOrders } from '../lib/expiry.js';
 import { cancelPixCharges } from '../lib/mercadopago.js';
@@ -130,7 +130,11 @@ router.post('/orders/:id/production', auth('kitchen.move'), asyncRoute(async (re
     }
     const direction = checkTransition(order, input.to, req.user.role, { reason: input.reason, acknowledgeUnpaid: input.acknowledgeUnpaid, settings });
     const sets = ['production_status=$1', 'updated_at=NOW()'];
-    if (direction === 'forward' && PRODUCTION_TIMESTAMP[input.to]) sets.push(`${PRODUCTION_TIMESTAMP[input.to]}=NOW()`);
+    if (direction === 'forward') {
+      // Etapas puladas também ganham horário (a linha do tempo do pedido fica completa).
+      const steps = PRODUCTION_FLOW.slice(PRODUCTION_FLOW.indexOf(order.production_status) + 1, PRODUCTION_FLOW.indexOf(input.to) + 1);
+      for (const step of steps) if (PRODUCTION_TIMESTAMP[step]) sets.push(`${PRODUCTION_TIMESTAMP[step]}=${step === input.to ? 'NOW()' : `COALESCE(${PRODUCTION_TIMESTAMP[step]},NOW())`}`);
+    }
     // Ao desfazer, limpa o horário da etapa que foi revertida.
     if (direction === 'backward' && PRODUCTION_TIMESTAMP[order.production_status]) sets.push(`${PRODUCTION_TIMESTAMP[order.production_status]}=NULL`);
     await db.query(`UPDATE orders SET ${sets.join(',')} WHERE id=$2`, [input.to, id]);
@@ -198,10 +202,11 @@ router.patch('/orders/:id/customer', auth('orders.edit'), asyncRoute(async (req,
   const input = parse(z.object({
     buyerName: z.string().trim().min(2, 'Informe o nome.').max(120),
     buyerPhone: z.string().trim().max(30).refine((v) => !v || (v.replace(/\D/g, '').length >= 10 && v.replace(/\D/g, '').length <= 13), 'Telefone inválido: informe com DDD.'),
-    teamId: z.preprocess((v) => (v === '' || v == null ? null : Number(v)), z.number().int().positive().nullable())
+    teamId: z.preprocess((v) => (v === '' || v == null ? null : Number(v)), z.number().int().positive().nullable()),
+    orderNote: z.string().trim().max(300, 'Observação da comanda muito longa (máximo 300 caracteres).').optional()
   }), req.body);
   await withTransaction(pool, async (db) => {
-    const found = await db.query('SELECT buyer_name,buyer_phone,team_name,on_credit FROM orders WHERE id=$1 FOR UPDATE', [id]);
+    const found = await db.query('SELECT buyer_name,buyer_phone,team_name,on_credit,order_note FROM orders WHERE id=$1 FOR UPDATE', [id]);
     if (!found.rowCount) throw new HttpError(404, 'Pedido não encontrado.');
     if (found.rows[0].on_credit && input.buyerPhone.replace(/\D/g, '').length < 10) throw new HttpError(400, 'Pedido no fiado precisa manter um telefone válido.');
     let teamName = 'Sem equipe';
@@ -212,7 +217,13 @@ router.patch('/orders/:id/customer', auth('orders.edit'), asyncRoute(async (req,
     }
     await db.query('UPDATE orders SET buyer_name=$1, buyer_phone=$2, team_id=$3, team_name=$4, updated_at=NOW() WHERE id=$5', [input.buyerName, input.buyerPhone, input.teamId, teamName, id]);
     const old = found.rows[0];
-    await addHistory(db, { orderId: id, kind: 'order', status: 'customer_updated', note: `Cliente: ${old.buyer_name} / ${old.buyer_phone || 'sem telefone'} / ${old.team_name} → ${input.buyerName} / ${input.buyerPhone || 'sem telefone'} / ${teamName}`, actor: req.user });
+    if (old.buyer_name !== input.buyerName || old.buyer_phone !== input.buyerPhone || old.team_name !== teamName) {
+      await addHistory(db, { orderId: id, kind: 'order', status: 'customer_updated', note: `Cliente: ${old.buyer_name} / ${old.buyer_phone || 'sem telefone'} / ${old.team_name} → ${input.buyerName} / ${input.buyerPhone || 'sem telefone'} / ${teamName}`, actor: req.user });
+    }
+    if (input.orderNote !== undefined && input.orderNote !== old.order_note) {
+      await db.query('UPDATE orders SET order_note=$1 WHERE id=$2', [input.orderNote, id]);
+      await addHistory(db, { orderId: id, kind: 'order', status: 'note_updated', note: `Observação da comanda: ${input.orderNote || '(removida)'}`, actor: req.user });
+    }
   });
   publish('order', { orderId: id });
   res.json({ ok: true });
@@ -239,27 +250,52 @@ router.post('/pos/orders', auth('pos.sell'), asyncRoute(async (req, res) => {
     if (input.buyerPhone.replace(/\D/g, '').length < 10) throw new HttpError(400, 'Para vender no fiado, informe o telefone do cliente.');
   }
   const settings = await readSettings();
-  const { deliveryFeeCents, tableNumber } = validateOrder(input, settings, { staff: true });
   const payment = input.payment;
   const hasCreditLine = payment.type === 'pay' && payment.lines.some((line) => line.method === 'fiado');
   if (hasCreditLine && input.buyerPhone.replace(/\D/g, '').length < 10) throw new HttpError(400, 'Para deixar parte no fiado, informe o telefone do cliente.');
   const method = payment.type === 'pay' ? (payment.lines.find((line) => line.method !== 'fiado') || payment.lines[0]).method
     : payment.type === 'credit' ? 'fiado' : payment.method;
+  // Comanda mista: lanchonete e artigos viram dois pedidos com a mesma senha (a lanchonete vai para a cozinha;
+  // os artigos ficam no catálogo deles, para o financeiro não misturar). A taxa de entrega fica com o primeiro.
+  const parts = ['snack', 'religious'].map((mode) => ({ mode, items: input.items.filter((item) => (item.mode || input.mode) === mode) }))
+    .filter((part) => part.items.length);
   const result = await withTransaction(pool, async (db) => {
-    const order = await insertOrder(db, input, settings, { paymentMethod: method, onCredit: payment.type === 'credit', actor: req.user, deliveryFeeCents, tableNumber });
+    const orders = [];
+    for (const [index, part] of parts.entries()) {
+      const partInput = { ...input, mode: part.mode, items: part.items,
+        serviceType: part.mode === 'religious' && input.serviceType === 'dine_in' ? 'pickup' : input.serviceType };
+      const { deliveryFeeCents, tableNumber } = validateOrder(partInput, settings, { staff: true });
+      orders.push(await insertOrder(db, { ...partInput, clientRequestId: index ? null : input.clientRequestId }, settings, {
+        paymentMethod: method, onCredit: payment.type === 'credit', actor: req.user, deliveryFeeCents: index ? 0 : deliveryFeeCents, tableNumber,
+        ticket: index ? orders[0].ticket_number : undefined }));
+    }
+    if (orders.length > 1) {
+      for (const [order, other] of [[orders[0], orders[1]], [orders[1], orders[0]]]) {
+        await addHistory(db, { orderId: order.id, kind: 'order', status: 'linked', note: `Mesma comanda do pedido ${other.order_number} (${other.mode === 'snack' ? 'lanchonete' : 'artigos religiosos'})`, actor: req.user });
+      }
+    }
     let change = 0;
     if (payment.type === 'pay') {
       // Valida o caixa e a soma antes de confirmar a venda: se algo falhar, nada é gravado.
-      const paid = await registerPayments(db, { orderId: order.id, lines: payment.lines, idempotencyKey: payment.idempotencyKey, actor: req.user, settings, note: 'Venda no balcão' });
-      change = paid.change || 0;
+      const split = splitPaymentLines(payment.lines, orders.map((order) => order.total_cents));
+      for (const [index, order] of orders.entries()) {
+        const paid = await registerPayments(db, { orderId: order.id, lines: split[index], idempotencyKey: index ? `${payment.idempotencyKey}-${index}` : payment.idempotencyKey,
+          actor: req.user, settings, note: 'Venda no balcão' });
+        change += paid.change || 0;
+      }
     }
-    return { order, change };
+    return { orders, change };
   });
-  publish('order', { orderId: result.order.id, created: true, mode: result.order.mode });
-  if (payment.type === 'pay') publish('payment', { orderId: result.order.id });
-  res.status(201).json({ id: result.order.id, ticket: result.order.ticket_number, orderNumber: result.order.order_number, token: result.order.public_token,
-    total: toMoney(result.order.total_cents), change: toMoney(result.change) });
+  const [main, linked] = result.orders;
+  for (const order of result.orders) {
+    publish('order', { orderId: order.id, created: true, mode: order.mode });
+    if (payment.type === 'pay') publish('payment', { orderId: order.id });
+  }
+  res.status(201).json({ id: main.id, ticket: main.ticket_number, orderNumber: main.order_number, token: main.public_token,
+    total: toMoney(result.orders.reduce((sum, order) => sum + order.total_cents, 0)), change: toMoney(result.change),
+    linked: linked ? { id: linked.id, orderNumber: linked.order_number, total: toMoney(linked.total_cents) } : null });
 }));
+
 
 // ---------- Relatório CSV ----------
 
@@ -271,11 +307,11 @@ router.get('/report.csv', auth('finance.view'), asyncRoute(async (req, res) => {
   const paymentLabel = { awaiting_payment: 'Aguardando pagamento', pending_review: 'Em conferência', partial: 'Parcial', confirmed: 'Pago', refunded: 'Estornado' };
   const formatMoney = (cents) => (Number(cents) / 100).toFixed(2).replace('.', ',');
   const lines = [
-    ['Pedido', 'Senha', 'Data', 'Comprador', 'Telefone', 'Equipe', 'Catálogo', 'Atendimento', 'Forma de pagamento', 'Subtotal', 'Entrega', 'Total', 'Recebido', 'Situação do pagamento', 'Etapa', 'Situação'],
+    ['Pedido', 'Senha', 'Data', 'Comprador', 'Telefone', 'Equipe', 'Catálogo', 'Atendimento', 'Forma de pagamento', 'Subtotal', 'Entrega', 'Total', 'Recebido', 'Situação do pagamento', 'Etapa', 'Situação', 'Observação'],
     ...rows.map((r) => [r.order_number, r.ticket_number, new Date(r.created_at).toLocaleString('pt-BR', { timeZone: TIMEZONE }), r.buyer_name, r.buyer_phone, r.team_name,
       r.mode === 'snack' ? 'Lanchonete' : 'Artigos religiosos', SERVICE_LABELS[r.service_type], PAYMENT_METHOD_LABELS[r.payment_method],
       formatMoney(r.subtotal_cents), formatMoney(r.delivery_fee_cents), formatMoney(r.total_cents), formatMoney(r.paid_cents - r.refunded_cents),
-      paymentLabel[r.payment_status], PRODUCTION_LABELS[r.production_status], statusLabel[r.status]])
+      paymentLabel[r.payment_status], PRODUCTION_LABELS[r.production_status], statusLabel[r.status], r.order_note])
   ].map((row) => row.map(escape).join(';'));
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="pedidos-${period.from}-a-${period.to}.csv"`);

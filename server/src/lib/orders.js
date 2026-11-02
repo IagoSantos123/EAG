@@ -75,7 +75,9 @@ export function priceItem(product, item) {
     note: product.allow_notes === false ? '' : (item.note || '').trim(),
     customText: product.custom_text_label ? customText : '',
     customTextLabel: product.custom_text_label || '',
-    prepMinutes: product.prep_minutes ?? null
+    prepMinutes: product.prep_minutes ?? null,
+    // Item que sai pronto do balcão: não precisa da cozinha.
+    kitchen: product.kitchen !== false
   };
 }
 
@@ -150,9 +152,11 @@ export function checkTransition(order, target, role, { reason, acknowledgeUnpaid
   const from = PRODUCTION_FLOW.indexOf(order.production_status);
   const to = PRODUCTION_FLOW.indexOf(target);
   if (to < 0) throw new HttpError(400, 'Etapa inválida.');
-  if (to === from + 1) {
+  // Para frente pode pular etapas (ex.: de "Em produção" direto para "Aguardando retirada").
+  if (to > from) {
     if (!FORWARD_ROLES[target].includes(role)) throw new HttpError(403, 'Seu perfil não pode mover o pedido para esta etapa.');
-    if (target === 'in_production' && order.payment_method === 'pix' && !order.on_credit && settings.kitchen?.require_pix_confirmation !== false && order.payment_status !== 'confirmed') {
+    const startIndex = PRODUCTION_FLOW.indexOf('in_production');
+    if (from < startIndex && to >= startIndex && order.payment_method === 'pix' && !order.on_credit && settings.kitchen?.require_pix_confirmation !== false && order.payment_status !== 'confirmed') {
       throw new HttpError(409, 'Aguardando a confirmação do PIX pelo financeiro antes de iniciar a produção.', 'PAYMENT_REQUIRED');
     }
     if (target === 'finalized' && order.payment_status !== 'confirmed' && !order.on_credit && !acknowledgeUnpaid) {
@@ -185,7 +189,9 @@ export function serializeItems(items) {
     options: (item.options || []).map((option) => ({ group: option.group, option: option.option, extra: toMoney(option.extraCents) })),
     note: item.note || '',
     customText: item.customText || '',
-    customTextLabel: item.customTextLabel || ''
+    customTextLabel: item.customTextLabel || '',
+    kitchen: item.kitchen !== false,
+    ...(item.priceAdjustedFromCents != null ? { originalUnitPrice: toMoney(item.priceAdjustedFromCents) } : {})
   }));
 }
 
@@ -206,6 +212,7 @@ export function serializeOrder(row) {
     deliveryAddress: row.delivery_address,
     deliveryReference: row.delivery_reference,
     deliveryNote: row.delivery_note,
+    orderNote: row.order_note || '',
     items: serializeItems(row.items),
     subtotal: toMoney(row.subtotal_cents),
     deliveryFee: toMoney(row.delivery_fee_cents),

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Save } from 'lucide-react';
 import { ErrorState, Field, MoneyInput, Spinner, Toggle, useToast } from '../components/ui.jsx';
-import { parseMoney } from '../lib/api.js';
+import { imageUrl, parseMoney } from '../lib/api.js';
 import { useAdmin } from './context.js';
 
 function Section({ title, description, children, onSave, busy }) {
@@ -62,6 +62,24 @@ export default function SettingsPage() {
   };
   const set = (key, field, value) => setSettings((current) => ({ ...current, [key]: { ...current[key], [field]: value } }));
 
+  // QR Code fixo do PIX: enviado sem redimensionar (comprimir pode deixar o QR ilegível).
+  const uploadQr = (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    if (!/^image\/(png|jpeg|webp)$/.test(file.type)) { toast('Envie uma imagem PNG, JPG ou WEBP.', 'error'); return; }
+    if (file.size > 1_400_000) { toast('Imagem muito grande: use um print ou foto menor que 1,4 MB.', 'error'); return; }
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const result = await call('/admin/images', { method: 'POST', body: { dataUrl: reader.result } });
+        set('pix', 'qr_image', result.url);
+        toast('QR carregado. Toque em Salvar para usar no balcão e no painel.', 'info');
+      } catch (err) { toast(err.message, 'error'); }
+    };
+    reader.readAsDataURL(file);
+  };
+
   if (error) return <div className="admin-page"><ErrorState message={error} onRetry={load} /></div>;
   if (!settings) return <div className="admin-page"><Spinner /></div>;
   const { pix, payment_methods: methods, service, kitchen, contact } = settings;
@@ -78,6 +96,15 @@ export default function SettingsPage() {
           <Field label="Cidade"><input value={pix.city} maxLength={80} onChange={(e) => set('pix', 'city', e.target.value)} /></Field>
         </div>
         <Field label="Orientações ao comprador"><textarea rows={2} maxLength={1000} value={pix.instructions} onChange={(e) => set('pix', 'instructions', e.target.value)} /></Field>
+        <div className="field">
+          <span>QR Code fixo do PIX</span>
+          <div className="qr-setting">
+            {pix.qr_image ? <img src={imageUrl(pix.qr_image)} alt="QR Code do PIX" /> : <span className="muted small">Nenhum QR enviado.</span>}
+            <label className="btn btn-outline btn-sm">Enviar imagem<input type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={uploadQr} /></label>
+            {pix.qr_image && <button type="button" className="btn btn-ghost btn-sm" onClick={() => set('pix', 'qr_image', '')}>Remover</button>}
+          </div>
+          <small className="hint">Aparece na Venda no balcão ao escolher PIX e no painel de senhas da TV.</small>
+        </div>
       </Section>
 
       <Section title="Formas de pagamento" description="PIX fica sempre disponível (quando há chave configurada ou o Mercado Pago está ligado; com o Mercado Pago, o PIX do site é gerado e confirmado automaticamente). Desativar uma forma remove a opção do site e do registro de recebimentos." onSave={() => save(['payment_methods'])} busy={busy}>
@@ -95,6 +122,8 @@ export default function SettingsPage() {
           <Field label="Quantidade de mesas" hint="0 = número livre"><input type="number" min="0" max="500" value={service.table_count} disabled={!service.tables_enabled} onChange={(e) => set('service', 'table_count', e.target.value)} /></Field>
         </div>
         <Toggle checked={service.tables_enabled} onChange={(v) => set('service', 'tables_enabled', v)} label="Pedir número da mesa no salão" description="Quando ativo, o comprador informa a mesa ao escolher consumo no salão." />
+        <Toggle checked={Boolean(service.site_paused)} onChange={(v) => set('service', 'site_paused', v)} label="Pausar pedidos pelo site"
+          description="Use quando o evento estiver rodando no modo local (sem internet): o site mostra 'Faça seu pedido no balcão' e não aceita pedidos." />
         <Field label="Orientação — salão"><input value={service.dine_in_instructions} maxLength={500} onChange={(e) => set('service', 'dine_in_instructions', e.target.value)} /></Field>
         <Field label="Orientação — retirada"><input value={service.pickup_instructions} maxLength={500} onChange={(e) => set('service', 'pickup_instructions', e.target.value)} /></Field>
         <Field label="Orientação — delivery"><input value={service.delivery_instructions} maxLength={500} onChange={(e) => set('service', 'delivery_instructions', e.target.value)} /></Field>
