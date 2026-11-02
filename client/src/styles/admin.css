@@ -355,7 +355,11 @@ body.kitchen-tv .admin-main { padding: 0; }
 .merge-row .field { flex: 1; min-width: 200px; margin: 0; }
 .charge-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
 .charge-preview { background: var(--surface-2); border-radius: var(--radius-sm); max-height: 64vh; overflow-y: auto; display: grid; place-items: start center; min-height: 200px; }
-.charge-preview img { width: 100%; height: auto; display: block; }
+.charge-preview { place-items: stretch; gap: 14px; padding: 10px; }
+.charge-preview figure { margin: 0; display: grid; gap: 6px; }
+.charge-preview img { width: 100%; height: auto; display: block; border-radius: 6px; }
+.charge-preview figcaption { display: flex; align-items: center; gap: 6px; }
+.charge-preview figcaption span { margin-right: auto; font-weight: 600; font-size: 13px; }
 .charge-text { margin: 0; }
 .charge-text textarea { min-height: 320px; height: 60vh; font: 13px/1.45 ui-monospace, Consolas, monospace; resize: vertical; }
 @media (max-width: 760px) { .charge-grid { grid-template-columns: 1fr; } .charge-text textarea { height: 220px; } }
