@@ -60,7 +60,8 @@ const pixLine = (pix) => (pix?.key ? `\nPague pelo PIX: ${pix.key}${pix.benefici
 
 export function chargeText(charges, { title, pix } = {}) {
   const head = ['🍔 *Lá em Graças Lanches · EAG Graças*', title ? `*${title}*` : '*Comanda de fiado*'].join('\n');
-  const total = charges.length > 1 ? `\n\n*Total da equipe: ${money(charges.reduce((sum, c) => sum + c.balance, 0))}*` : '';
+  const totalLabel = new Set(charges.map((c) => c.team)).size > 1 ? `Total (${charges.length} pessoas)` : 'Total da equipe';
+  const total = charges.length > 1 ? `\n\n*${totalLabel}: ${money(charges.reduce((sum, c) => sum + c.balance, 0))}*` : '';
   return `${head}\n\n${charges.map(personText).join('\n\n')}${total}${pixLine(pix)}`;
 }
 
@@ -163,12 +164,12 @@ export function drawHead(ctx, width, logo, title, part, subtitle = 'EAG Graças 
 }
 
 // Rodapé: total da equipe (se houver), chave PIX e agradecimento. Devolve a altura.
-function drawFoot(ctx, width, y, { total, people, pix, draw }) {
+function drawFoot(ctx, width, y, { total, people, pix, draw, label = 'Total da equipe' }) {
   let h = 0;
   if (total != null) {
     if (draw) {
       ctx.fillStyle = C.yellow; roundRect(ctx, PAD, y, width - PAD * 2, 56, 16); ctx.fill();
-      ctx.font = font(700, 18); ctx.fillStyle = C.ink; ctx.fillText(`Total da equipe · ${people} ${people === 1 ? 'pessoa' : 'pessoas'}`, PAD + IN, y + 35);
+      ctx.font = font(700, 18); ctx.fillStyle = C.ink; ctx.fillText(`${label} · ${people} ${people === 1 ? 'pessoa' : 'pessoas'}`, PAD + IN, y + 35);
       ctx.font = font(800, 24); ctx.textAlign = 'right'; ctx.fillText(money(total), width - PAD - IN, y + 37); ctx.textAlign = 'left';
     }
     h += 70;
@@ -223,12 +224,15 @@ export async function chargeImages(charges, { title, pix } = {}) {
   // Equipe: distribui as comandas em duas colunas (sempre na mais baixa) e abre uma parte nova quando não cabe.
   const width = TEAM_W; const colW = (width - PAD * 2 - GAP) / 2;
   const total = charges.reduce((sum, c) => sum + c.balance, 0);
-  const footH = drawFoot(measure, width, 0, { total, people: charges.length, pix, draw: false });
+  // Várias equipes juntas (todos os fiados): cada comanda mostra a equipe da pessoa.
+  const mixed = new Set(charges.map((c) => c.team)).size > 1;
+  const label = mixed ? 'Total' : 'Total da equipe';
+  const footH = drawFoot(measure, width, 0, { total, people: charges.length, pix, label, draw: false });
   const bodyMax = TEAM_MAX_H - HEAD_H - footH;
   const pages = [];
   let page = null;
   for (const charge of charges) {
-    const h = personCard(measure, charge, { left: 0, y: 0, width: colW, draw: false });
+    const h = personCard(measure, charge, { left: 0, y: 0, width: colW, showTeam: mixed, draw: false });
     if (!page) page = { cols: [0, 0], cards: [] };
     let col = page.cols[0] <= page.cols[1] ? 0 : 1;
     if (page.cards.length && page.cols[col] + h > bodyMax) {
@@ -245,9 +249,9 @@ export async function chargeImages(charges, { title, pix } = {}) {
     const { canvas, ctx } = newCanvas(width, HEAD_H + bodyH + footH);
     drawHead(ctx, width, logo, title, pages.length > 1 ? `${index + 1} de ${pages.length}` : '');
     for (const card of current.cards) {
-      personCard(ctx, card.charge, { left: PAD + card.col * (colW + GAP), y: HEAD_H + card.y, width: colW, draw: true });
+      personCard(ctx, card.charge, { left: PAD + card.col * (colW + GAP), y: HEAD_H + card.y, width: colW, showTeam: mixed, draw: true });
     }
-    drawFoot(ctx, width, HEAD_H + bodyH, { total, people: charges.length, pix, draw: true });
+    drawFoot(ctx, width, HEAD_H + bodyH, { total, people: charges.length, pix, label, draw: true });
     blobs.push(await toBlob(canvas));
   }
   return blobs;

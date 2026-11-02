@@ -72,6 +72,9 @@ export default function CreditsPage() {
   }, [orders]);
   const suggestions = useMemo(() => suggestMerges(customers), [customers]);
   const pickedCustomers = customers.filter((c) => picked[c.key]);
+  // Todas as pessoas com fiado em aberto (respeita a busca), agrupadas por equipe e em ordem de nome.
+  const allCharges = () => setSheet({ title: 'Fiados em aberto', charges: chargesByPerson(orders)
+    .sort((a, b) => a.team.localeCompare(b.team, 'pt-BR') || a.name.localeCompare(b.name, 'pt-BR')) });
   const teamCharges = (team) => setSheet({ title: `Fiados da equipe ${team}`, charges: chargesByPerson(orders.filter((o) => o.teamName === team)) });
 
   return <div className="admin-page">
@@ -113,7 +116,11 @@ export default function CreditsPage() {
               {can('payments.register') && <button type="button" className="btn btn-primary btn-sm" onClick={() => setSettlingTeam(t.name)}>Ver e receber</button>}</td>
           </tr>)}</tbody></table></div>
       : grouped === 'customer' && tab === 'open'
-        ? <>{pickedCustomers.length > 0 && <div className="merge-bar">
+        ? <>{pickedCustomers.length === 0 && customers.length > 0 && <div className="merge-bar">
+          <span>{customers.length} {customers.length === 1 ? 'pessoa' : 'pessoas'} com fiado em aberto{search.trim() ? ' (na busca)' : ''}</span>
+          <button type="button" className="btn btn-primary btn-sm" onClick={allCharges}><FileText size={15} /> Comandas de todos</button>
+        </div>}
+        {pickedCustomers.length > 0 && <div className="merge-bar">
           <span>{pickedCustomers.length} {pickedCustomers.length === 1 ? 'cliente selecionado' : 'clientes selecionados'}</span>
           <button type="button" className="btn btn-ghost btn-sm" onClick={() => setPicked({})}>Limpar</button>
           <button type="button" className="btn btn-primary btn-sm" disabled={pickedCustomers.length < 2} onClick={() => setMerging({ title: 'Juntar clientes', groups: [pickedCustomers] })}><GitMerge size={15} /> Juntar como uma pessoa</button>
