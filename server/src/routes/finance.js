@@ -201,6 +201,26 @@ router.post('/credits/settle', auth('payments.register'), asyncRoute(async (req,
   res.status(201).json({ ok: true, count: result.count, total: toMoney(result.total), change: toMoney(result.change) });
 }));
 
+// Junta grafias diferentes da mesma pessoa ("Julio", "Júlio César"): todas as comandas passam a ter o mesmo nome.
+router.post('/credits/rename', auth('credits.manage'), asyncRoute(async (req, res) => {
+  const input = parse(z.object({
+    orderIds: z.array(z.number().int().positive()).min(1, 'Escolha as comandas.').max(300),
+    buyerName: z.string().trim().min(2, 'Informe o nome.').max(120, 'Nome muito longo.')
+  }), req.body);
+  const changed = await withTransaction(pool, async (db) => {
+    const { rows } = await db.query('SELECT id, buyer_name FROM orders WHERE id = ANY($1) FOR UPDATE', [input.orderIds]);
+    if (rows.length !== input.orderIds.length) throw new HttpError(404, 'Alguma comanda não foi encontrada.');
+    const targets = rows.filter((row) => row.buyer_name !== input.buyerName);
+    for (const row of targets) {
+      await db.query('UPDATE orders SET buyer_name=$1, updated_at=NOW() WHERE id=$2', [input.buyerName, row.id]);
+      await addHistory(db, { orderId: row.id, kind: 'order', status: 'customer_updated', note: `Nome unificado: ${row.buyer_name} → ${input.buyerName}`, actor: req.user });
+    }
+    return targets.length;
+  });
+  for (const id of input.orderIds) publish('order', { orderId: id });
+  res.json({ ok: true, changed });
+}));
+
 router.get('/credits', auth('credits.view'), asyncRoute(async (req, res) => {
   const settled = req.query.status === 'settled';
   const { rows } = await pool.query(settled

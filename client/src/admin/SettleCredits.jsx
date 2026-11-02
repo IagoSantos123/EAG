@@ -6,27 +6,11 @@ import { Search } from 'lucide-react';
 import { Modal, useToast } from '../components/ui.jsx';
 import { money, uuid } from '../lib/api.js';
 import { useAdmin } from './context.js';
+import { personKey, similar, words } from './nomes.js';
 import { OpenCashInline, PaymentLines, hasCashLine, linesError, linesPayload, newPaymentLines, useRegisterMethods } from './shared.jsx';
 
-// Palavras sem acento, minúsculas e sem conectivos curtos ("e", "da").
-const words = (text) => text.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ')
-  .split(' ').filter((word) => word.length > 2);
-
-// Mesma palavra tolerando abreviação ("Rodol" x "Rodolpho") e uma letra trocada ("Kamila" x "Camila").
-function similar(a, b) {
-  if (a === b || a.startsWith(b) || b.startsWith(a)) return true;
-  if (Math.min(a.length, b.length) < 5 || Math.abs(a.length - b.length) > 1) return false;
-  let previous = Array.from({ length: b.length + 1 }, (_, i) => i);
-  for (let i = 1; i <= a.length; i++) {
-    const row = [i];
-    for (let j = 1; j <= b.length; j++) row[j] = Math.min(previous[j] + 1, row[j - 1] + 1, previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
-    previous = row;
-  }
-  return previous[b.length] <= 1;
-}
-
 // Mesma pessoa mesmo com maiúsculas ou espaços diferentes ("amanda" e "Amanda ").
-const personKey = (order) => order.buyerName.trim().toLowerCase();
+const orderPerson = (order) => personKey(order.buyerName);
 
 const when = (order) => {
   const date = new Date(order.createdAt);
@@ -68,7 +52,7 @@ export default function SettleCredits({ orders, initialName = '', initialTeam = 
   const matches = useMemo(() => {
     if (by === 'team') {
       return orders.filter((order) => team && order.teamName === team).map((order) => ({ order, hits: 1, full: true }))
-        .sort((a, b) => personKey(a.order).localeCompare(personKey(b.order), 'pt-BR') || new Date(a.order.createdAt) - new Date(b.order.createdAt));
+        .sort((a, b) => orderPerson(a.order).localeCompare(orderPerson(b.order), 'pt-BR') || new Date(a.order.createdAt) - new Date(b.order.createdAt));
     }
     const wanted = words(name);
     if (!wanted.length) return [];
@@ -86,7 +70,7 @@ export default function SettleCredits({ orders, initialName = '', initialTeam = 
   // Subtotal de cada pessoa na lista da equipe (o que falta receber de cada uma).
   const personTotals = useMemo(() => {
     const totals = {};
-    for (const { order } of matches) totals[personKey(order)] = (totals[personKey(order)] || 0) + order.balance;
+    for (const { order } of matches) totals[orderPerson(order)] = (totals[orderPerson(order)] || 0) + order.balance;
     return totals;
   }, [matches]);
   const selected = matches.filter((m) => checked[m.order.id]).map((m) => m.order);
@@ -131,8 +115,8 @@ export default function SettleCredits({ orders, initialName = '', initialTeam = 
       : !matches.length ? <p className="alert alert-info">{by === 'team' ? 'Essa equipe não tem fiado em aberto.' : 'Nenhum fiado em aberto com esse nome.'}</p>
       : <ul className="settle-list">
         {matches.map(({ order, full }, index) => <React.Fragment key={order.id}>
-          {by === 'team' && personKey(order) !== (matches[index - 1] && personKey(matches[index - 1].order))
-            && <li className="settle-person"><b>{order.buyerName}</b><span>{money(personTotals[personKey(order)])}</span></li>}
+          {by === 'team' && orderPerson(order) !== (matches[index - 1] && orderPerson(matches[index - 1].order))
+            && <li className="settle-person"><b>{order.buyerName}</b><span>{money(personTotals[orderPerson(order)])}</span></li>}
           <li className={checked[order.id] ? 'on' : ''}>
           <label>
             <input type="checkbox" checked={Boolean(checked[order.id])} onChange={(e) => setChecked((current) => ({ ...current, [order.id]: e.target.checked }))} />
