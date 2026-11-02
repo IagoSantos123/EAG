@@ -58,12 +58,12 @@ router.get('/summary', auth('finance.view'), asyncRoute(async (req, res) => {
   const byService = (await pool.query(`SELECT service_type, COUNT(*)::int AS orders, COALESCE(SUM(total_cents),0)::int AS sales_cents
     FROM orders o WHERE ${orderSql} AND status='active' GROUP BY service_type ORDER BY service_type`, orderParams)).rows;
 
-  const byProduct = (await pool.query(`SELECT item->>'name' AS name,
+  const byProduct = (await pool.query(`SELECT item->>'name' AS name, o.mode,
       CASE WHEN COALESCE(item->>'category','') ~ '^[0-9]*$' THEN 'Sem categoria' ELSE item->>'category' END AS category,
       SUM((item->>'quantity')::int)::int AS quantity,
       SUM(COALESCE((item->>'totalCents')::int, (item->>'unitCents')::int * (item->>'quantity')::int))::int AS total_cents
     FROM orders o, jsonb_array_elements(o.items) AS item
-    WHERE ${orderSql} AND status='active' GROUP BY 1,2 ORDER BY total_cents DESC, name LIMIT 60`, orderParams)).rows;
+    WHERE ${orderSql} AND status='active' GROUP BY 1,2,3 ORDER BY total_cents DESC, name LIMIT 500`, orderParams)).rows;
 
   // Recebimentos registrados no período (data do registro do recebimento).
   const payParams = [period.from, period.to, TIMEZONE];
@@ -106,7 +106,7 @@ router.get('/summary', auth('finance.view'), asyncRoute(async (req, res) => {
       const net = byServiceReceived.find((row) => row.service_type === type);
       return { serviceType: type, orders: sales?.orders || 0, sales: toMoney(sales?.sales_cents || 0), received: toMoney(net?.net_cents || 0) };
     }),
-    byProduct: byProduct.map((row) => ({ name: row.name, category: row.category, quantity: row.quantity, total: toMoney(row.total_cents) }))
+    byProduct: byProduct.map((row) => ({ name: row.name, mode: row.mode, category: row.category, quantity: row.quantity, total: toMoney(row.total_cents) }))
   });
 }));
 

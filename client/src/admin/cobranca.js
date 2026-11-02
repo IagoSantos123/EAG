@@ -68,13 +68,13 @@ export function chargeText(charges, { title, pix } = {}) {
 // Uma pessoa: imagem estreita, uma coluna. Equipe: comandas em duas colunas, divididas em partes do tamanho
 // de uma tela de celular (para não virar uma imagem comprida demais, ilegível ao abrir no WhatsApp).
 
-const C = { blue: '#029ad6', blueDark: '#0279ab', yellow: '#ffe27a', red: '#d6202b', ink: '#1d1d1f', muted: '#71757c', line: '#d9d9de', paper: '#fffdf7', chip: '#fdeeef' };
+export const C = { blue: '#029ad6', blueDark: '#0279ab', yellow: '#ffe27a', red: '#d6202b', ink: '#1d1d1f', muted: '#71757c', line: '#d9d9de', paper: '#fffdf7', chip: '#fdeeef' };
 const IN = 26; const GAP = 20; const PAD = 28;
-const font = (weight, size) => `${weight} ${size}px Inter, Arial, sans-serif`;
+export const font = (weight, size) => `${weight} ${size}px Inter, Arial, sans-serif`;
 const SINGLE_W = 640;
 const TEAM_W = 1080; const TEAM_MAX_H = 1920;
 
-function wrap(ctx, text, width) {
+export function wrap(ctx, text, width) {
   const lines = [];
   let line = '';
   for (const word of text.split(' ')) {
@@ -85,7 +85,7 @@ function wrap(ctx, text, width) {
   return lines;
 }
 
-function roundRect(ctx, x, y, w, h, r) {
+export function roundRect(ctx, x, y, w, h, r) {
   ctx.beginPath();
   ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
   ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
@@ -150,15 +150,15 @@ function personCard(ctx, charge, { left, y, width, showTeam, draw }) {
   return h;
 }
 
-const loadImage = (src) => new Promise((resolve) => { const img = new Image(); img.onload = () => resolve(img); img.onerror = () => resolve(null); img.src = src; });
+export const loadImage = (src) => new Promise((resolve) => { const img = new Image(); img.onload = () => resolve(img); img.onerror = () => resolve(null); img.src = src; });
 
-const HEAD_H = 200;
-function drawHead(ctx, width, logo, title, part) {
+export const HEAD_H = 200;
+export function drawHead(ctx, width, logo, title, part, subtitle = 'EAG Graças · valores anotados no fiado') {
   if (logo) { const lh = 96; const lw = (logo.width / logo.height) * lh; ctx.drawImage(logo, (width - lw) / 2, 20, lw, lh); }
   ctx.textAlign = 'center';
   ctx.font = font(800, 26); ctx.fillStyle = C.yellow; ctx.fillText((title || 'Comanda de fiado').toUpperCase(), width / 2, 152);
   ctx.font = font(500, 15); ctx.fillStyle = '#ffffff';
-  ctx.fillText(`EAG Graças · valores anotados no fiado${part ? ` · parte ${part}` : ''}`, width / 2, 178);
+  ctx.fillText(`${subtitle}${part ? ` · parte ${part}` : ''}`, width / 2, 178);
   ctx.textAlign = 'left';
 }
 
@@ -189,7 +189,7 @@ function drawFoot(ctx, width, y, { total, people, pix, draw }) {
   return h + 48;
 }
 
-function newCanvas(width, height) {
+export function newCanvas(width, height) {
   const scale = 2;
   const canvas = document.createElement('canvas');
   canvas.width = width * scale; canvas.height = height * scale;
@@ -201,7 +201,7 @@ function newCanvas(width, height) {
   return { canvas, ctx };
 }
 
-const toBlob = (canvas) => new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+export const toBlob = (canvas) => new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
 
 // Imagens (PNG) da cobrança. Uma pessoa: uma imagem. Equipe: uma ou mais partes, cada uma com cabeçalho e rodapé.
 export async function chargeImages(charges, { title, pix } = {}) {

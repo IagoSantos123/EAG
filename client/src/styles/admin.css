@@ -347,6 +347,8 @@ body.kitchen-tv .admin-main { padding: 0; }
 .settle-maybe { font-style: normal; font-size: 11px; font-weight: 700; color: var(--amber); background: var(--amber-50); border-radius: 99px; padding: 1px 7px; margin-left: 6px; }
 .settle-value { white-space: nowrap; }
 .settle-by { margin-bottom: 4px; }
+.panel-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.panel-head h3 { margin: 0; }
 .merge-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 12px; margin-bottom: 10px; border: 1px solid var(--blue); border-radius: var(--radius-sm); background: #fff; }
 .merge-bar span { font-weight: 600; margin-right: auto; }
 .merge-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; max-height: 60vh; overflow-y: auto; }

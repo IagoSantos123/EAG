@@ -1,10 +1,22 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { AlertTriangle, ArrowDownCircle, ArrowUpCircle, Banknote, CheckCircle2, CreditCard, Download, Info, Lock, Printer, QrCode, Unlock } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { AlertTriangle, ArrowDownCircle, ArrowUpCircle, Banknote, CheckCircle2, CreditCard, Download, Info, Lock, Printer, QrCode, Trophy, Unlock } from 'lucide-react';
 import { Badge, EmptyState, ErrorState, Field, Modal, MoneyInput, Spinner, useConfirm, useNow, useToast } from '../components/ui.jsx';
 import { dateTime, download, elapsed, fullDateTime, money, moneyCents, parseMoney, time } from '../lib/api.js';
 import { MODES, PAYMENT_METHODS, SERVICE_TYPES } from '../lib/labels.js';
 import { useAdmin, useLiveRefresh } from './context.js';
 import { OpenCashInline, OrderDetail, PaymentBadge, PaymentDialog, PeriodFilter, ServiceBadge, usePeriod } from './shared.jsx';
+import ShareSheet from './ShareSheet.jsx';
+import { buildRanking, periodLabel, rankingImages, rankingText } from './ranking.js';
+
+// Relação dos mais vendidos do período, em imagem e texto para divulgar.
+function RankingSheet({ rows, from, to, onClose }) {
+  const sections = useMemo(() => buildRanking(rows), [rows]);
+  const period = periodLabel(from, to);
+  const makeImages = useCallback(() => rankingImages(sections, { period }), [sections, period]);
+  const count = sections.reduce((sum, s) => sum + s.items.length, 0);
+  return <ShareSheet title="Itens mais vendidos" fileBase={`mais-vendidos-${period}`} subtitle={`${period} · ${count} produtos`}
+    text={rankingText(sections, { period })} makeImages={makeImages} onClose={onClose} />;
+}
 
 const METHOD_ICONS = { pix: QrCode, cash: Banknote, debit: CreditCard, credit: CreditCard };
 const METHOD_ORDER = ['pix', 'cash', 'debit', 'credit'];
@@ -34,6 +46,7 @@ function Overview() {
   const [filters, setFilters] = useState({ service: '', mode: '', method: '' });
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
+  const [ranking, setRanking] = useState(false);
   const query = `${period.query}&${new URLSearchParams(Object.entries(filters).filter(([, v]) => v)).toString()}`;
   const load = useCallback(async () => {
     try { setData(await call(`/finance/summary?${query}`)); setError(''); } catch (err) { setError(err.message); }
@@ -85,11 +98,15 @@ function Overview() {
       </div>
 
       <section className="panel">
-        <h3>Vendas por produto <small className="muted">(pedidos ativos)</small></h3>
+        <div className="panel-head">
+          <h3>Vendas por produto <small className="muted">(pedidos ativos)</small></h3>
+          {data.byProduct.length > 0 && <button type="button" className="btn btn-outline btn-sm" onClick={() => setRanking(true)}><Trophy size={15} /> Relação dos mais vendidos</button>}
+        </div>
         {data.byProduct.length === 0 ? <p className="muted">Sem vendas no período.</p>
           : <table className="table compact"><thead><tr><th>Produto</th><th>Categoria</th><th>Qtd.</th><th>Total</th></tr></thead>
-            <tbody>{data.byProduct.map((row) => <tr key={`${row.name}-${row.category}`}><td>{row.name}</td><td>{row.category}</td><td>{row.quantity}</td><td>{money(row.total)}</td></tr>)}</tbody></table>}
+            <tbody>{data.byProduct.map((row) => <tr key={`${row.name}-${row.mode}-${row.category}`}><td>{row.name}</td><td>{row.category}</td><td>{row.quantity}</td><td>{money(row.total)}</td></tr>)}</tbody></table>}
       </section>
+      {ranking && <RankingSheet rows={data.byProduct} from={period.from} to={period.to} onClose={() => setRanking(false)} />}
     </>}
   </>;
 }
